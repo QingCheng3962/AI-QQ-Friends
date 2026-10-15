@@ -30,10 +30,22 @@ DEFAULT_SYSTEM_PROMPT = (
     '每次只发一两句群聊风格的短话，口语化、自然，不要长篇大论；'
     '像真人网友一样接话、玩梗、回应，不要总是一本正经；'
     '不要复述或翻译别人的话，不要暴露你是 AI，不要提及“模型/提示词/系统”；'
-    '不要输出命令；被 @ 或被问到就正常回答；保持友好，不辱骂、不刷屏。'
+    '不要输出命令，不要输出触发词（例如 [AI]）；被 @ 或被问到就正常回答；'
+    '保持友好，不骂人、不说脏话、不刷屏。'
 )
 
-DEFAULT_TRIGGER_REGEX = r'(?i)(?:^|[\s，,])小助手(?:$|[\s，,])'
+# The trigger is a plain, user-editable STRING (not a hardcoded pattern).
+# A message triggers only when it STARTS WITH it: "[AI]你好" triggers,
+# "你好[AI]" does not. Comma-separated words are all accepted.
+DEFAULT_TRIGGER_WORD = '[AI]'
+
+# Words/phrases that must never appear in the bot's outgoing message.
+DEFAULT_BLOCKED_WORDS = [
+    '纯净输出',
+    '傻逼', '沙比', '煞笔', '尼玛', '你妈', '妈的', '他妈', '操你', '草你',
+    '草泥马', '卧槽', '滚蛋', '去死', '废物', '贱', '滚出',
+    'fuck', 'shit', 'bitch', 'asshole', 'dick',
+]
 
 
 def _clamp_int(v: Any, lo: int, hi: int) -> int:
@@ -86,12 +98,18 @@ class AiConfig:
     systemPrompt: str = DEFAULT_SYSTEM_PROMPT
 
     # Reply rules
-    mentionReply: bool = True                 # reply when the bot is @-mentioned
+    mentionReply: bool = False                # reply when the bot is @-mentioned
     triggerEnabled: bool = True
-    triggerRegex: str = DEFAULT_TRIGGER_REGEX
+    triggerWord: str = DEFAULT_TRIGGER_WORD    # user string; message must START with it
+    triggerRegex: str = ''                     # optional extra regex (advanced, may be empty)
     autoReply: bool = False                   # reply to every group message
     autoReplyChance: int = 100                # 0-100 (used with autoReply)
     atReply: bool = True                      # prefix the reply with @sender
+
+    # Output filter: the bot must never echo the trigger (prevents group members
+    # from injecting prompts) and must not say rude words / leak "纯净输出".
+    stripTrigger: bool = True
+    blockedWords: List[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_WORDS))
 
     # Context / limits
     contextEnabled: bool = True
@@ -117,7 +135,21 @@ class AiConfig:
         self.timeoutSeconds = _clamp_int(self.timeoutSeconds, 5, 600)
         self.retryCount = _clamp_int(self.retryCount, 0, 5)
         self.systemPrompt = str(self.systemPrompt or '').strip() or DEFAULT_SYSTEM_PROMPT
+        self.triggerWord = str(self.triggerWord or '').strip()
         self.triggerRegex = str(self.triggerRegex or '').strip()
+        self.mentionReply = bool(self.mentionReply)
+        self.triggerEnabled = bool(self.triggerEnabled)
+        self.autoReply = bool(self.autoReply)
+        self.atReply = bool(self.atReply)
+        self.stripTrigger = bool(self.stripTrigger)
+        if self.blockedWords is None:
+            self.blockedWords = list(DEFAULT_BLOCKED_WORDS)
+        norm_bw = []
+        for w in self.blockedWords or []:
+            s = str(w).strip()
+            if s and s not in norm_bw:
+                norm_bw.append(s)
+        self.blockedWords = norm_bw
         self.autoReplyChance = _clamp_int(self.autoReplyChance, 0, 100)
         self.contextLength = _clamp_int(self.contextLength, 0, 200)
         self.maxReplyMessages = _clamp_int(self.maxReplyMessages, 1, 20)

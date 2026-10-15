@@ -162,8 +162,9 @@ class App:
 
         rule = ttk.LabelFrame(sc.inner, text='回复规则', padding=8)
         rule.pack(fill='x', pady=(8, 0))
-        self.var_mention = tk.BooleanVar(value=True)
+        self.var_mention = tk.BooleanVar(value=False)
         self.var_trig_enabled = tk.BooleanVar(value=True)
+        self.var_trigger_word = tk.StringVar()
         self.var_trigger = tk.StringVar()
         self.var_auto = tk.BooleanVar(value=False)
         self.var_chance = tk.StringVar()
@@ -174,10 +175,12 @@ class App:
             row=0, column=1, sticky='w', padx=4)
         ttk.Checkbutton(rule, text='每条都回复', variable=self.var_auto).grid(
             row=0, column=2, sticky='w', padx=4)
-        self._row(rule, 1, '触发正则/词', self.var_trigger, width=48,
-                  hint='逗号分隔；[名字] 按字面量匹配')
+        self._row(rule, 1, '触发词（必须开头）', self.var_trigger_word, width=24,
+                  hint='用户自定义字符串；消息以此开头才回复（"[AI]你好"触发，"你好[AI]"不触发）；逗号分隔多个')
+        self._row(rule, 2, '触发正则（可选）', self.var_trigger, width=24,
+                  hint='高级：额外正则，匹配即回复；可留空')
         r = ttk.Frame(rule)
-        r.grid(row=2, column=0, columnspan=4, sticky='w', pady=2)
+        r.grid(row=3, column=0, columnspan=4, sticky='w', pady=2)
         ttk.Label(r, text='每条都回复概率 %').pack(side='left')
         ttk.Entry(r, textvariable=self.var_chance, width=6).pack(side='left', padx=(4, 12))
         ttk.Checkbutton(r, text='回复时 @ 对方', variable=self.var_at).pack(side='left')
@@ -202,6 +205,16 @@ class App:
         bl.pack(fill='x', pady=(8, 4))
         self.blacklist = tk.Text(bl, height=4, wrap='word', font=('Consolas', 9))
         self.blacklist.pack(fill='both', expand=True, padx=2, pady=2)
+
+        flt = ttk.LabelFrame(sc.inner, text='输出过滤（防注入 / 语言检测）', padding=8)
+        flt.pack(fill='x', pady=(8, 4))
+        self.var_strip = tk.BooleanVar(value=True)
+        ttk.Checkbutton(flt, text='回复中移除触发词（如 [AI]，防止群友注入提示词自触发）',
+                        variable=self.var_strip).pack(anchor='w', padx=2, pady=2)
+        ttk.Label(flt, text='违禁词（每行一个；回复含其中任意一个则整条丢弃）',
+                  foreground='#888888').pack(anchor='w', padx=2)
+        self.blocked = tk.Text(flt, height=4, wrap='word', font=('Consolas', 9))
+        self.blocked.pack(fill='both', expand=True, padx=2, pady=2)
 
     def _build_log_tab(self):
         tab = ttk.Frame(self.notebook, padding=6)
@@ -289,6 +302,7 @@ class App:
         self.prompt.insert('1.0', ai.systemPrompt)
         self.var_mention.set(bool(ai.mentionReply))
         self.var_trig_enabled.set(bool(ai.triggerEnabled))
+        self.var_trigger_word.set(ai.triggerWord or '')
         self.var_trigger.set(ai.triggerRegex or '')
         self.var_auto.set(bool(ai.autoReply))
         self.var_chance.set(str(ai.autoReplyChance))
@@ -300,6 +314,9 @@ class App:
         self.var_cooldown.set(str(ai.cooldownSeconds))
         self.blacklist.delete('1.0', 'end')
         self.blacklist.insert('1.0', '\n'.join(b.get('id', '') for b in ai.blacklist))
+        self.var_strip.set(bool(ai.stripTrigger))
+        self.blocked.delete('1.0', 'end')
+        self.blocked.insert('1.0', '\n'.join(str(w) for w in (ai.blockedWords or [])))
 
     def _gather(self):
         cfg = self.controller.config
@@ -324,6 +341,7 @@ class App:
         ai.systemPrompt = self.prompt.get('1.0', 'end').strip()
         ai.mentionReply = self.var_mention.get()
         ai.triggerEnabled = self.var_trig_enabled.get()
+        ai.triggerWord = self.var_trigger_word.get().strip()
         ai.triggerRegex = self.var_trigger.get().strip()
         ai.autoReply = self.var_auto.get()
         ai.autoReplyChance = self._int(self.var_chance.get(), 100)
@@ -335,6 +353,9 @@ class App:
         ai.cooldownSeconds = self._int(self.var_cooldown.get(), 5)
         ids = [ln.strip() for ln in self.blacklist.get('1.0', 'end').splitlines() if ln.strip()]
         ai.blacklist = [{'id': i, 'name': ''} for i in ids]
+        ai.stripTrigger = self.var_strip.get()
+        ai.blockedWords = [ln.strip() for ln in self.blocked.get('1.0', 'end').splitlines()
+                           if ln.strip()]
         cfg.validate()
         cfg.save()
 

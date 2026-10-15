@@ -61,18 +61,29 @@ class AiBot:
             self._contexts[group_id] = buf
         return buf
 
+    def _trigger_literals(self) -> List[str]:
+        """The user-configured trigger word(s) as literal strings.
+
+        ``triggerWord`` is a plain string the user types in (e.g. ``[AI]``);
+        comma-separated values are all accepted. These are matched at the START
+        of an incoming message, and stripped from outgoing replies.
+        """
+        raw = (self.config.triggerWord or '').strip()
+        return [p.strip() for p in re.split(r'[,，]', raw) if p.strip()]
+
     def _compile_triggers(self) -> List[re.Pattern]:
-        raw = (self.config.triggerRegex or '').strip()
-        if not raw:
-            return []
-        parts = [p.strip() for p in re.split(r'[,，]', raw) if p.strip()]
-        pats = []
-        for p in parts:
+        pats: List[re.Pattern] = []
+        # 1) The user's trigger word: the message must START with it.
+        for w in self._trigger_literals():
             try:
-                if p.startswith('[') and p.endswith(']'):
-                    pats.append(re.compile(re.escape(p[1:-1]), re.IGNORECASE))
-                else:
-                    pats.append(re.compile(p))
+                pats.append(re.compile(r'^\s*' + re.escape(w), re.IGNORECASE))
+            except re.error:
+                continue
+        # 2) Optional advanced regex (searched anywhere).
+        raw = (self.config.triggerRegex or '').strip()
+        for p in [x.strip() for x in re.split(r'[,，]', raw) if x.strip()]:
+            try:
+                pats.append(re.compile(p))
             except re.error:
                 continue
         return pats
@@ -136,6 +147,9 @@ class AiBot:
         reply = self._ask(group_id, sender, content)
         if not reply:
             return
+        reply = self._sanitize_reply(reply)
+        if not reply:
+            return
         self._last_reply_at[group_id] = now
         for line in self._split_reply(reply):
             at = sender_id if (self.config.atReply and self.config.mentionReply) else ''
@@ -174,6 +188,32 @@ class AiBot:
         # strip a leading "我:" etc.
         text = re.sub(r'^(?:我|AI|助手)\s*[:：]\s*', '', text)
         return text.strip().strip('"“”').strip()
+
+    def _sanitize_reply(self, text: str) -> str:
+        """Final guard before sending.
+
+        - Remove the trigger word(s) (e.g. ``[AI]``) so the bot can never inject a
+          prompt that would make itself / others re-trigger.
+        - Block rude words and the literal ``纯净输出`` leak.
+        Returns '' when the whole reply must be dropped.
+        """
+        cfg = self.config
+        text = (text or '').strip()
+        if not text:
+            return ''
+        if cfg.stripTrigger:
+            for tok in self._trigger_literals():
+                text = re.sub(re.escape(tok), '', text, flags=re.IGNORECASE)
+            text = re.sub(r'\s{2,}', ' ', text).strip()
+        if not text:
+            return ''
+        low = text.lower()
+        for w in cfg.blockedWords or []:
+            w = str(w).strip()
+            if w and w.lower() in low:
+                self._log('warn', f'回复含违禁词「{w}」，已拦截: {text}')
+                return ''
+        return text
 
     def _split_reply(self, text: str) -> List[str]:
         cfg = self.config
