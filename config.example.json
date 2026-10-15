@@ -1,0 +1,50 @@
+{
+  "framework": "snowluma",
+  "snowluma": {
+    "launcherPath": "",
+    "mode": "forward",
+    "url": "ws://127.0.0.1:3001",
+    "accessToken": "",
+    "listenHost": "0.0.0.0",
+    "listenPort": 3002,
+    "autoConfigNewAccounts": true
+  },
+  "napcat": {
+    "launcherPath": "",
+    "mode": "forward",
+    "url": "ws://127.0.0.1:3001",
+    "accessToken": "",
+    "listenHost": "0.0.0.0",
+    "listenPort": 3002,
+    "autoConfigNewAccounts": true
+  },
+  "groups": [],
+  "ignoreGroups": [],
+  "autoReconnect": true,
+  "healthCheckSeconds": 30,
+  "lastLoginUin": "",
+  "ai": {
+    "enabled": true,
+    "provider": "openai",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "sk-填你的密钥",
+    "model": "deepseek-chat",
+    "temperature": 0.8,
+    "maxTokens": 512,
+    "timeoutSeconds": 60,
+    "retryCount": 1,
+    "systemPrompt": "你是 QQ 群里的一个普通群友，性格随和、爱聊天。每次只发一两句群聊风格的短话，口语化、自然，不要暴露你是 AI。",
+    "mentionReply": true,
+    "triggerEnabled": true,
+    "triggerRegex": "[小助手]",
+    "autoReply": false,
+    "autoReplyChance": 100,
+    "atReply": true,
+    "contextEnabled": true,
+    "contextLength": 20,
+    "maxReplyMessages": 2,
+    "maxCharsPerMessage": 120,
+    "cooldownSeconds": 5,
+    "blacklist": []
+  }
+}
