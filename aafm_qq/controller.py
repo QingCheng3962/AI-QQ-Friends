@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from .ai_bot import AiBot
 from .config import AppConfig
 from .engine import QqEngine, BASE_DIR
+from .interactions import Interactions
 from .procutil import node_process_paths
 
 
@@ -29,7 +30,10 @@ class Controller:
         self.ui_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
 
         self._engine = QqEngine(cwd=BASE_DIR, on_event=self._on_event)
-        self.ai = AiBot(self.config.ai, self._ai_send, self._log)
+        self.interactions = Interactions(self.config, self._ai_send,
+                                         self._send_music, self._log)
+        self.ai = AiBot(self.config.ai, self._ai_send, self._log,
+                        affinity=self.interactions.affinity)
         self.ai.self_id = ''
 
         self._running = False
@@ -53,6 +57,9 @@ class Controller:
 
     def _ai_send(self, group_id: str, text: str, at_sender: str = '') -> bool:
         return self._engine.send_group(group_id, text, at_sender)
+
+    def _send_music(self, group_id: str, **card) -> bool:
+        return self._engine.send_group_music(group_id, **card)
 
     # ------------------------------------------------------------------
     # OneBot endpoint auto-detection (SnowLuma / NapCat)
@@ -290,9 +297,20 @@ class Controller:
     # ------------------------------------------------------------------
     def _on_event(self, ev: Dict[str, Any]) -> None:
         self.ui_queue.put(ev)
-        t = ev.get('event')
-        if t == 'groupMessage':
-            self.ai.feed(ev)
+        if ev.get('event') != 'groupMessage':
+            return
+        # Ignore our own messages so the bot never reacts to itself.
+        sender_id = str(ev.get('senderId') or '')
+        self_id = str(getattr(self.ai, 'self_id', '') or '')
+        if self_id and sender_id and sender_id == self_id:
+            return
+        # 点歌 / 好感度 等命令先处理；命中就不再交给聊天 AI。
+        try:
+            if self.interactions.handle(ev):
+                return
+        except Exception as e:  # noqa: BLE001
+            self._log('error', '互动功能出错: ' + str(e))
+        self.ai.feed(ev)
 
     def set_ai_enabled(self, enabled: bool) -> None:
         self.config.ai.enabled = bool(enabled)
@@ -302,8 +320,15 @@ class Controller:
 
     def reload_ai(self) -> None:
         self.config.ai.validate()
+        self.config.song.validate()
+        self.config.affinity.validate()
         self.ai.load(self.config.ai)
-        self._log('info', 'AI 配置已重载。')
+        self.interactions.load(self.config)
+        self._log('info', 'AI / 互动配置已重载。')
+
+    def clear_affinity(self) -> None:
+        self.interactions.affinity.clear()
+        self._log('info', '好感度已清空。')
 
     def clear_context(self) -> None:
         self.ai.clear_context()

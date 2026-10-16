@@ -90,6 +90,15 @@ class QqEngine:
         return self.send({'type': 'sendGroup', 'groupId': str(group_id),
                           'text': text, 'atSender': str(at_sender or '')})
 
+    def send_group_music(self, group_id: str, platform: str = '163', songId: str = '',
+                         title: str = '', artist: str = '', audio: str = '',
+                         url: str = '', image: str = '') -> bool:
+        """Post a music card. ``platform`` = qq / 163 / custom (see song.SongHit)."""
+        return self.send({'type': 'sendGroupMusic', 'groupId': str(group_id),
+                          'platform': str(platform or '163'), 'songId': str(songId or ''),
+                          'title': title, 'artist': artist, 'audio': audio,
+                          'url': url, 'image': image})
+
     def set_groups(self, groups) -> bool:
         return self.send({'type': 'setGroups', 'groups': [str(g) for g in (groups or [])]})
 

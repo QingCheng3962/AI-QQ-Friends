@@ -21,10 +21,14 @@ from .config import AiConfig
 class AiBot:
     def __init__(self, config: AiConfig,
                  send_group: Callable[[str, str, str], bool],
-                 on_log: Callable[[str, str], None]):
+                 on_log: Callable[[str, str], None],
+                 affinity: Optional[object] = None):
         self.config = config
         self._send_group = send_group   # (groupId, text, atSender) -> bool
         self._log = on_log              # (level, message)
+        # Optional 好感度 store (aafm_qq.affinity.Affinity): used to colour the
+        # persona prompt and to reward members who chat with the bot.
+        self._affinity = affinity
         self._q: "queue.Queue[dict]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -144,21 +148,28 @@ class AiBot:
         if cooldown and now - self._last_reply_at.get(group_id, 0) < cooldown:
             return
 
-        reply = self._ask(group_id, sender, content)
+        reply = self._ask(group_id, sender, content, sender_id)
         if not reply:
             return
         reply = self._sanitize_reply(reply)
         if not reply:
             return
         self._last_reply_at[group_id] = now
+        sent = 0
         for line in self._split_reply(reply):
             at = sender_id if (self.config.atReply and self.config.mentionReply) else ''
             if self._send_group(group_id, line, at):
                 self._log('ai', f'[{ev.get("groupName") or group_id}] 回复: {line}')
                 self._context(group_id).append(f'我: {line}')
+                sent += 1
             time.sleep(0.6)
+        if sent and self._affinity is not None:
+            try:  # 被搭话就涨好感度（受每日上限约束）
+                self._affinity.add(group_id, sender_id, sender)
+            except Exception as e:  # noqa: BLE001
+                self._log('warn', '好感度更新失败: ' + str(e))
 
-    def _ask(self, group_id: str, sender: str, content: str) -> str:
+    def _ask(self, group_id: str, sender: str, content: str, sender_id: str = '') -> str:
         cfg = self.config
         try:
             provider = llm.create_provider(cfg)
@@ -172,7 +183,12 @@ class AiBot:
             user = (f'以下是 QQ 群最近的聊天记录：\n{lines}\n\n'
                     f'请以群友身份接一句话回复（口语、简短，最多 '
                     f'{int(cfg.maxReplyMessages)} 句）。')
-            text = provider.send(cfg.systemPrompt, [{'role': 'user', 'content': user}])
+            system_prompt = cfg.systemPrompt
+            if self._affinity is not None:
+                hint = self._affinity.hint(group_id, sender_id, sender)
+                if hint:
+                    system_prompt = f'{system_prompt}\n{hint}'
+            text = provider.send(system_prompt, [{'role': 'user', 'content': user}])
         except Exception as e:  # noqa: BLE001
             self._log('error', 'LLM 请求失败: ' + str(e))
             return ''

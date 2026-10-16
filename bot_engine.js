@@ -13,6 +13,8 @@
 //   {"event":"end","reason":...}
 // Commands (stdin, one JSON per line):
 //   {"type":"sendGroup","groupId":...,"text":...,"atSender":bool}
+//   {"type":"sendGroupMusic","groupId":...,"platform":"qq"|"163"|"custom",
+//    "songId":...,"title":...,"audio":...,"url":...,"image":...}
 //   {"type":"setGroups","groups":[...]} / {"type":"setIgnoreGroups","groups":[...]}
 //   {"type":"ping"} / {"type":"quit"}
 
@@ -187,6 +189,16 @@ function senderName(event) {
 function groupName(id) { return groupNames.get(id) || ('群' + id); }
 
 // --- outgoing ---
+// Escape CQ code special characters (& [ ] ,) inside a parameter value.
+function cqEscape(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/\[/g, '&#91;')
+        .replace(/\]/g, '&#93;')
+        .replace(/,/g, '&#44;')
+        .replace(/\r?\n/g, ' ');
+}
+
 function rawSend(text) {
     let sent = false;
     if (mode === 'forward') {
@@ -382,6 +394,35 @@ function handleCommand(cmd) {
             if (!gid || !text) return;
             if (cmd.atSender) text = '[CQ:at,qq=' + String(cmd.atSender) + '] ' + text;
             sendAction('send_group_msg', { group_id: gid, message: text });
+            break;
+        }
+        case 'sendGroupMusic': {
+            const gid = String(cmd.groupId == null ? '' : cmd.groupId).trim();
+            if (!gid) return;
+            const platform = String(cmd.platform || '163');
+            let card;
+            if (platform === 'custom') {
+                const audio = String(cmd.audio || '');
+                if (!audio) { log('warn', '自定义音乐卡片缺少音频地址，已跳过。'); return; }
+                card = '[CQ:music,type=custom'
+                    + ',url=' + cqEscape(cmd.url || audio)
+                    + ',audio=' + cqEscape(audio)
+                    + ',title=' + cqEscape(cmd.title || '')
+                    + ',image=' + cqEscape(cmd.image || '') + ']';
+            } else {
+                if (!cmd.songId) { log('warn', '音乐卡片缺少歌曲 id，已跳过。'); return; }
+                card = '[CQ:music,type=' + cqEscape(platform)
+                    + ',id=' + cqEscape(cmd.songId) + ']';
+            }
+            actionAsync('send_group_msg', { group_id: gid, message: card }, 8000)
+                .then((res) => {
+                    const ok = res && (res.status === 'ok' ||
+                        (res.retcode != null && res.retcode === 0));
+                    if (!ok) {
+                        log('warn', '音乐卡片发送失败: ' +
+                            JSON.stringify((res && (res.message || res.wording)) || res));
+                    }
+                });
             break;
         }
         case 'setGroups':

@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 config.json
 runtime_config.json
+affinity.json

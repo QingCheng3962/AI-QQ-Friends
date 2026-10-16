@@ -49,5 +49,22 @@
     "maxCharsPerMessage": 120,
     "cooldownSeconds": 5,
     "blacklist": []
+  },
+  "song": {
+    "enabled": true,
+    "trigger": "[点歌]",
+    "platform": "auto",
+    "cooldownSeconds": 4,
+    "timeoutSeconds": 8
+  },
+  "affinity": {
+    "enabled": true,
+    "start": 20,
+    "maximum": 100,
+    "gainPerChat": 2,
+    "dailyCap": 20,
+    "queryTrigger": "[好感度]",
+    "promptHint": true,
+    "persist": true
   }
 }

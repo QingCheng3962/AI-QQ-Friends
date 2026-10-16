@@ -2,10 +2,12 @@
 
 Persisted to ``config.json`` next to the program (gitignored). Two parts:
 
-- ``ai``   : the LLM / persona / reply-trigger settings (shared, like the AI
-             player in the Minecraft project).
-- ``qq``   : OneBot 11 endpoint, kept **per framework** (SnowLuma / NapCat) so
-             each has its own launcher path, port and token.
+- ``ai``      : the LLM / persona / reply-trigger settings (shared, like the AI
+                player in the Minecraft project).
+- ``qq``      : OneBot 11 endpoint, kept **per framework** (SnowLuma / NapCat) so
+                each has its own launcher path, port and token.
+- ``song``    : 点歌 (song request) — search a song and post a music card.
+- ``affinity``: 好感度 (favour) — a per-member score that colours the persona.
 """
 from __future__ import annotations
 
@@ -165,6 +167,81 @@ class AiConfig:
 
 
 @dataclass
+class SongConfig:
+    """点歌: a group message starting with ``trigger`` (default ``[点歌]``) makes
+    the bot search a song and post a music card. ``platform`` is one of
+    ``auto`` (try QQ then NetEase), ``qq`` (QQ 音乐) or ``163`` (网易云).
+
+    Matched messages are consumed here and never reach the chat AI, so a song
+    request is not "answered" by the large model as well.
+    """
+    enabled: bool = True
+    trigger: str = '[点歌]'
+    platform: str = 'auto'
+    cooldownSeconds: int = 4            # 同一群两次点歌的最小间隔
+    timeoutSeconds: int = 8             # 搜索接口超时
+
+    def validate(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.trigger = str(self.trigger or '').strip() or '[点歌]'
+        if self.platform not in ('auto', 'qq', '163'):
+            self.platform = 'auto'
+        self.cooldownSeconds = _clamp_int(self.cooldownSeconds, 0, 3600)
+        self.timeoutSeconds = _clamp_int(self.timeoutSeconds, 2, 60)
+
+
+@dataclass
+class AffinityConfig:
+    """好感度: a per-(group, member) score 0-100 that grows as the member chats
+    with the bot, is written into the persona prompt (so the bot gets warmer to
+    people it "knows") and can be queried in-group with ``queryTrigger``."""
+    enabled: bool = True
+    start: int = 20            # 新成员的初始好感度
+    maximum: int = 100         # 上限
+    gainPerChat: int = 2       # 每次被搭话 +N
+    dailyCap: int = 20         # 每人每天最多 +N（0=不限制）
+    queryTrigger: str = '[好感度]'
+    promptHint: bool = True    # 把好感度写进人设提示词，影响语气
+    persist: bool = True       # 落盘到 affinity.json
+
+    def validate(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.maximum = _clamp_int(self.maximum, 1, 1000)
+        self.start = _clamp_int(self.start, 0, self.maximum)
+        self.gainPerChat = _clamp_int(self.gainPerChat, 0, 100)
+        self.dailyCap = _clamp_int(self.dailyCap, 0, 100000)
+        self.queryTrigger = str(self.queryTrigger or '').strip() or '[好感度]'
+        self.promptHint = bool(self.promptHint)
+        self.persist = bool(self.persist)
+
+
+# Titles shown when a member checks their 好感度 (high → low).
+AFFINITY_TITLES = [
+    (95, '心动'),
+    (80, '挚友'),
+    (60, '好朋友'),
+    (40, '朋友'),
+    (20, '眼熟'),
+    (0, '陌生'),
+]
+
+
+def affinity_title(score: int) -> str:
+    for floor, name in AFFINITY_TITLES:
+        if score >= floor:
+            return name
+    return AFFINITY_TITLES[-1][1]
+
+
+# Sub-dataclasses nested inside AppConfig (JSON object -> validated instance).
+_NESTED_CONFIGS = {
+    'ai': AiConfig,
+    'song': SongConfig,
+    'affinity': AffinityConfig,
+}
+
+
+@dataclass
 class AppConfig:
     framework: str = 'snowluma'   # 'snowluma' | 'napcat'
     snowluma: OneBotConfig = field(default_factory=OneBotConfig)
@@ -176,6 +253,8 @@ class AppConfig:
     healthCheckSeconds: int = 30
     lastLoginUin: str = ''
     ai: AiConfig = field(default_factory=AiConfig)
+    song: SongConfig = field(default_factory=SongConfig)
+    affinity: AffinityConfig = field(default_factory=AffinityConfig)
 
     def active(self) -> OneBotConfig:
         return self.napcat if self.framework == 'napcat' else self.snowluma
@@ -203,12 +282,19 @@ class AppConfig:
         self.autoReconnect = bool(self.autoReconnect)
         self.healthCheckSeconds = _clamp_int(self.healthCheckSeconds, 0, 3600)
         self.lastLoginUin = str(self.lastLoginUin or '').strip()
-        if isinstance(self.ai, dict):
-            self.ai = AiConfig(**{k: v for k, v in self.ai.items()
-                                  if k in AiConfig.__dataclass_fields__})
-        if not isinstance(self.ai, AiConfig):
-            self.ai = AiConfig()
-        self.ai.validate()
+        for name, cls in _NESTED_CONFIGS.items():
+            self._coerce(name, cls)
+
+    def _coerce(self, name: str, cls) -> None:
+        """Make ``self.<name>`` a validated instance of ``cls`` (from dict/None)."""
+        val = getattr(self, name, None)
+        if isinstance(val, dict):
+            val = cls(**{k: v for k, v in val.items()
+                         if k in cls.__dataclass_fields__})
+        if not isinstance(val, cls):
+            val = cls()
+        val.validate()
+        setattr(self, name, val)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -223,10 +309,11 @@ class AppConfig:
                     data = json.load(f)
                 if isinstance(data, dict):
                     for k, v in data.items():
-                        if k == 'ai' and isinstance(v, dict):
+                        if k in _NESTED_CONFIGS and isinstance(v, dict):
+                            obj = getattr(cfg, k)
                             for k2, v2 in v.items():
-                                if hasattr(cfg.ai, k2):
-                                    setattr(cfg.ai, k2, v2)
+                                if hasattr(obj, k2):
+                                    setattr(obj, k2, v2)
                         elif hasattr(cfg, k):
                             setattr(cfg, k, v)
             except Exception as e:  # noqa: BLE001

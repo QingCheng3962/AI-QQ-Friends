@@ -45,6 +45,7 @@ class App:
         self.notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         self._build_connect_tab()
         self._build_ai_tab()
+        self._build_interact_tab()
         self._build_log_tab()
         self._load_config()
         root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -216,6 +217,68 @@ class App:
         self.blocked = tk.Text(flt, height=4, wrap='word', font=('Consolas', 9))
         self.blocked.pack(fill='both', expand=True, padx=2, pady=2)
 
+    def _build_interact_tab(self):
+        host = ttk.Frame(self.notebook, padding=8)
+        self.notebook.add(host, text=' 互动 ')
+
+        sd = ttk.LabelFrame(host, text='点歌（群内发「触发词 + 歌名」即发音乐卡片）', padding=8)
+        sd.pack(fill='x', pady=(6, 0))
+        self.var_song_enabled = tk.BooleanVar(value=True)
+        self.var_song_trigger = tk.StringVar()
+        self.var_song_platform = tk.StringVar(value='auto')
+        self.var_song_cooldown = tk.StringVar()
+        self.var_song_timeout = tk.StringVar()
+        ttk.Checkbutton(sd, text='启用点歌', variable=self.var_song_enabled).grid(
+            row=0, column=0, sticky='w', padx=4, pady=2)
+        self._row(sd, 1, '触发词（必须开头）', self.var_song_trigger, width=18,
+                  hint='例如 [点歌] 起风了；命中后不再交给 AI 聊天')
+        ttk.Label(sd, text='平台').grid(row=2, column=0, sticky='w', padx=4, pady=2)
+        ttk.Combobox(sd, textvariable=self.var_song_platform, state='readonly',
+                     values=['auto', 'qq', '163'], width=8).grid(
+            row=2, column=1, sticky='w', padx=4, pady=2)
+        r = ttk.Frame(sd)
+        r.grid(row=3, column=0, columnspan=3, sticky='w', pady=2)
+        ttk.Label(r, text='冷却秒').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_song_cooldown, width=6).pack(side='left', padx=(4, 14))
+        ttk.Label(r, text='搜索超时秒').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_song_timeout, width=6).pack(side='left', padx=4)
+        ttk.Label(sd, text='auto=先 QQ 音乐再网易云；两者都不可用时回退到可直链播放的备用音源。',
+                  foreground='#888888', wraplength=760, justify='left').grid(
+            row=4, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        sd.columnconfigure(1, weight=1)
+
+        af = ttk.LabelFrame(host, text='好感度（随聊天增长，会影响 AI 语气）', padding=8)
+        af.pack(fill='x', pady=(8, 4))
+        self.var_aff_enabled = tk.BooleanVar(value=True)
+        self.var_aff_start = tk.StringVar()
+        self.var_aff_max = tk.StringVar()
+        self.var_aff_gain = tk.StringVar()
+        self.var_aff_cap = tk.StringVar()
+        self.var_aff_trigger = tk.StringVar()
+        self.var_aff_hint = tk.BooleanVar(value=True)
+        self.var_aff_persist = tk.BooleanVar(value=True)
+        ttk.Checkbutton(af, text='启用好感度', variable=self.var_aff_enabled).pack(
+            anchor='w', padx=4, pady=2)
+        r = ttk.Frame(af)
+        r.pack(fill='x', pady=2)
+        ttk.Label(r, text='查询触发词').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_aff_trigger, width=14).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='初始').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_aff_start, width=6).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='上限').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_aff_max, width=6).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='每次被搭话 +').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_aff_gain, width=6).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='每人每天上限').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_aff_cap, width=6).pack(side='left', padx=4)
+        r2 = ttk.Frame(af)
+        r2.pack(fill='x', pady=(4, 0))
+        ttk.Checkbutton(r2, text='影响人设提示词（好感度高时更亲近）',
+                        variable=self.var_aff_hint).pack(side='left', padx=(4, 12))
+        ttk.Checkbutton(r2, text='保存到 affinity.json',
+                        variable=self.var_aff_persist).pack(side='left', padx=(0, 12))
+        ttk.Button(r2, text='清空好感度', command=self._on_clear_affinity).pack(side='left')
+
     def _build_log_tab(self):
         tab = ttk.Frame(self.notebook, padding=6)
         self.notebook.add(tab, text=' 日志 ')
@@ -318,6 +381,23 @@ class App:
         self.blocked.delete('1.0', 'end')
         self.blocked.insert('1.0', '\n'.join(str(w) for w in (ai.blockedWords or [])))
 
+        song = cfg.song
+        self.var_song_enabled.set(bool(song.enabled))
+        self.var_song_trigger.set(song.trigger or '')
+        self.var_song_platform.set(song.platform or 'auto')
+        self.var_song_cooldown.set(str(song.cooldownSeconds))
+        self.var_song_timeout.set(str(song.timeoutSeconds))
+
+        aff = cfg.affinity
+        self.var_aff_enabled.set(bool(aff.enabled))
+        self.var_aff_trigger.set(aff.queryTrigger or '')
+        self.var_aff_start.set(str(aff.start))
+        self.var_aff_max.set(str(aff.maximum))
+        self.var_aff_gain.set(str(aff.gainPerChat))
+        self.var_aff_cap.set(str(aff.dailyCap))
+        self.var_aff_hint.set(bool(aff.promptHint))
+        self.var_aff_persist.set(bool(aff.persist))
+
     def _gather(self):
         cfg = self.controller.config
         cfg.framework = ('napcat' if self.var_fw.get().strip().lower().startswith('nap')
@@ -356,6 +436,24 @@ class App:
         ai.stripTrigger = self.var_strip.get()
         ai.blockedWords = [ln.strip() for ln in self.blocked.get('1.0', 'end').splitlines()
                            if ln.strip()]
+
+        song = cfg.song
+        song.enabled = self.var_song_enabled.get()
+        song.trigger = self.var_song_trigger.get().strip()
+        song.platform = self.var_song_platform.get().strip() or 'auto'
+        song.cooldownSeconds = self._int(self.var_song_cooldown.get(), 4)
+        song.timeoutSeconds = self._int(self.var_song_timeout.get(), 8)
+
+        aff = cfg.affinity
+        aff.enabled = self.var_aff_enabled.get()
+        aff.queryTrigger = self.var_aff_trigger.get().strip()
+        aff.start = self._int(self.var_aff_start.get(), 20)
+        aff.maximum = self._int(self.var_aff_max.get(), 100)
+        aff.gainPerChat = self._int(self.var_aff_gain.get(), 2)
+        aff.dailyCap = self._int(self.var_aff_cap.get(), 20)
+        aff.promptHint = self.var_aff_hint.get()
+        aff.persist = self.var_aff_persist.get()
+
         cfg.validate()
         cfg.save()
 
@@ -395,6 +493,10 @@ class App:
     def _on_clear_ctx(self):
         self.controller.clear_context()
         self._append('上下文已清空。')
+
+    def _on_clear_affinity(self):
+        self.controller.clear_affinity()
+        self._append('好感度已清空。')
 
     def _on_manual_send(self):
         gid = self.send_group_id.get().strip()
