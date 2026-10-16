@@ -1,5 +1,7 @@
 # AI QQ Friends
 
+**简体中文** | [English](README.en.md)
+
 > 当前版本 **v0.1.1** · 更新日志见 [CHANGELOG.md](CHANGELOG.md)
 
 把大模型接进 QQ 群，让它成为一个**会聊天的群友**：消息以触发词（默认 `[AI]`）**开头**时，像真人网友一样接话、玩梗、回答问题；并对输出做**防注入 + 语言检测**。
@@ -111,7 +113,7 @@ npm install
 AI QQ Friends/
 ├─ main.py                # 入口（GUI）
 ├─ aafm_qq/
-│  ├─ gui.py              # tkinter GUI：连接 / AI 配置 / 日志
+│  ├─ gui.py              # tkinter GUI：连接 / AI 配置 / 互动 / 日志
 │  ├─ controller.py       # 引擎 + AI + 配置；框架自动发现与 Token 握手探测
 │  ├─ ai_bot.py           # “群友”大脑：判定回复、上下文、调用大模型、切分发送
 │  ├─ interactions.py     # 群内互动调度：点歌 / 好感度（命中即不再走 AI）

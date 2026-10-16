@@ -1,5 +1,7 @@
 # 更新日志
 
+**简体中文** | [English](CHANGELOG.en.md)
+
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [0.1.1] - 2026-10-16
