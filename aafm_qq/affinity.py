@@ -121,6 +121,7 @@ class Affinity:
             return ''
         title = self.title(score)
         who = name or '对方'
+        maximum = max(1, int(self.config.maximum or 100))
         if score >= 80:
             tone = '你和他很熟，语气可以热络、随意、带点亲近感'
         elif score >= 60:
@@ -131,14 +132,15 @@ class Affinity:
             tone = '你对他只是眼熟，语气礼貌但不用太热情'
         else:
             tone = '你们还不熟，语气客气、保持距离'
-        return (f'【好感度】你对 {who} 的好感度是 {score}/100（{title}）：{tone}。'
+        return (f'【好感度】你对 {who} 的好感度是 {score}/{maximum}（{title}）：{tone}。'
                 f'这只是你的态度参考，不要直接说出数字或“好感度”这个词。')
 
     def card(self, group_id: str, user_id: str, name: str = '') -> str:
         """The in-group reply text for a 好感度 query."""
         score = self.score(group_id, user_id)
         title = self.title(score)
-        filled = max(0, min(10, round(score / 10)))
+        maximum = max(1, int(self.config.maximum or 100))
+        filled = max(0, min(10, round(score / maximum * 10)))
         bar = '█' * filled + '░' * (10 - filled)
         who = name or '你'
-        return f'{who} 对我的好感度：{bar} {score}/100（{title}）'
+        return f'{who} 对我的好感度：{bar} {score}/{maximum}（{title}）'

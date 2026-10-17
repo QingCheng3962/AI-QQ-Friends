@@ -4,6 +4,20 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **"@ the sender in replies"** now depends only on its own toggle; it no longer also requires "reply when @-mentioned".
+- **A false "restricted" verdict no longer wedges the bot**: consecutive online-check failures are now advisory — it keeps retrying at a low frequency and resumes automatically once back online (previously it permanently stopped auto-reconnect *and* the online check).
+- **Affinity display** uses the configured maximum instead of a hard-coded 100 (the query progress bar scales proportionally).
+- **Failed LLM requests are no longer hammered**: the cooldown is stamped when the request starts, so an erroring endpoint is not called again for every matching message.
+- **The own-account id is fetched right after connecting**, so @-mention detection no longer waits up to ~30s for the first heartbeat.
+- **API URL joining** no longer duplicates a path when `baseUrl` already ends in `/v1` or is a full endpoint.
+- **Blacklist**: plain QQ numbers (strings) hand-written in `config.json` are no longer silently dropped.
+- **Connect tab**: a detected token no longer overwrites a token you typed; **manual send** now reports failure when the engine is not connected.
+- **Song requests**: the empty-keyword hint is now also rate-limited to avoid spam.
+
 ## [0.1.1] - 2026-10-16
 
 ### Added · In-group song requests

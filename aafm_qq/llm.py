@@ -22,6 +22,22 @@ def normalize_base_url(base_url: str) -> str:
     return s + '/'
 
 
+def build_endpoint(base_url: str, path: str) -> str:
+    """Join a base URL with an API path without duplicating a segment.
+
+    Tolerates a user pasting a full endpoint (``…/v1/chat/completions``) or a
+    base that already carries the API version (``…/v1`` for Anthropic).
+    """
+    base = normalize_base_url(base_url)
+    bare = base.rstrip('/')
+    path = path.lstrip('/')
+    if bare.endswith('/' + path):
+        return bare + '/'
+    if path.startswith('v1/') and bare.endswith('/v1'):
+        bare = bare[:-len('/v1')]
+    return bare + '/' + path
+
+
 def clean_api_key(key) -> str:
     cleaned = ''.join(ch for ch in str(key or '')
                       if 0x21 <= ord(ch) <= 0x7E).strip()
@@ -76,7 +92,7 @@ class _BaseProvider:
 class OpenAIProvider(_BaseProvider):
     def __init__(self, cfg, base_url: str, api_key: str):
         super().__init__(cfg, api_key)
-        self.endpoint = normalize_base_url(base_url) + 'chat/completions'
+        self.endpoint = build_endpoint(base_url, 'chat/completions')
 
     def send(self, system_prompt: str, messages: List[dict]) -> str:
         body = {'model': self.model, 'temperature': self.temperature,
@@ -101,7 +117,7 @@ class OpenAIProvider(_BaseProvider):
 class AnthropicProvider(_BaseProvider):
     def __init__(self, cfg, base_url: str, api_key: str):
         super().__init__(cfg, api_key)
-        self.endpoint = normalize_base_url(base_url) + 'v1/messages'
+        self.endpoint = build_endpoint(base_url, 'v1/messages')
 
     def send(self, system_prompt: str, messages: List[dict]) -> str:
         body = {'model': self.model, 'max_tokens': self.max_tokens,

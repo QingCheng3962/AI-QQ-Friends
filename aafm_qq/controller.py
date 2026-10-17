@@ -41,6 +41,7 @@ class Controller:
         self._qq_nicknames: Dict[str, str] = {}
         self._snowluma_detected = ''
         self._snowluma_detect_at = 0.0
+        self._snowluma_detected_marker = ''
         self._snowluma_uin = ''
 
     def _log(self, level: str, message: str) -> None:
@@ -58,6 +59,10 @@ class Controller:
     def _ai_send(self, group_id: str, text: str, at_sender: str = '') -> bool:
         return self._engine.send_group(group_id, text, at_sender)
 
+    def send_manual(self, group_id: str, text: str) -> bool:
+        """Send a test message from the GUI. Returns whether it was queued."""
+        return self._engine.send_group(group_id, text)
+
     def _send_music(self, group_id: str, **card) -> bool:
         return self._engine.send_group_music(group_id, **card)
 
@@ -71,7 +76,8 @@ class Controller:
         ``index.mjs``; marker='index.mjs'. NapCat ships ``launcher-win10.bat``.
         """
         now = time.time()
-        if self._snowluma_detected and now - self._snowluma_detect_at < 5:
+        if (self._snowluma_detected and self._snowluma_detected_marker == marker
+                and now - self._snowluma_detect_at < 5):
             return self._snowluma_detected
         found = ''
         try:
@@ -88,6 +94,7 @@ class Controller:
         if found:
             self._snowluma_detected = found
             self._snowluma_detect_at = now
+            self._snowluma_detected_marker = marker
         return found
 
     def _snowluma_config_dir(self) -> str:

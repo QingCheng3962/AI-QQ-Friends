@@ -79,18 +79,18 @@ class Interactions:
     # ------------------------------------------------------------------
     def _on_song(self, group_id: str, sender_id: str, keyword: str, ev: dict) -> None:
         cfg = self.config.song
-        if not keyword:
-            self._send_group(
-                group_id,
-                f'想听什么？发送「{cfg.trigger} 歌名」，例如 {cfg.trigger} 起风了',
-                sender_id)
-            return
         now = time.time()
         cooldown = int(cfg.cooldownSeconds or 0)
         with self._lock:
             if cooldown and now - self._last_song_at.get(group_id, 0) < cooldown:
                 return
             self._last_song_at[group_id] = now
+        if not keyword:
+            self._send_group(
+                group_id,
+                f'想听什么？发送「{cfg.trigger} 歌名」，例如 {cfg.trigger} 起风了',
+                sender_id)
+            return
         threading.Thread(target=self._do_song,
                          args=(group_id, sender_id, keyword, ev),
                          daemon=True).start()

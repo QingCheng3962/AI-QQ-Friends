@@ -320,7 +320,7 @@ class App:
         if fw == 'snowluma':
             det = self.controller.snowluma_ws_auth()
             if det:
-                if det[2]:
+                if det[2] and not token:
                     token = det[2]
                 if not url:
                     url = f'ws://{det[0]}:{det[1]}'
@@ -501,10 +501,13 @@ class App:
     def _on_manual_send(self):
         gid = self.send_group_id.get().strip()
         text = self.send_text.get().strip()
-        if gid and text:
-            self.controller._engine.send_group(gid, text)
+        if not gid or not text:
+            return
+        if self.controller.send_manual(gid, text):
             self._append(f'手动发送 [{gid}]: {text}')
             self.send_text.set('')
+        else:
+            self._append('手动发送失败：QQ 引擎未连接。', 'error')
 
     # ------------------------------------------------------------------
     def _poll(self):

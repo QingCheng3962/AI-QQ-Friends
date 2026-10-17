@@ -34,6 +34,7 @@ class AiBot:
         self._running = False
         self._contexts: Dict[str, Deque[str]] = {}
         self._last_reply_at: Dict[str, float] = {}
+        self._lock = threading.Lock()
         self.self_id = ''
 
     # ------------------------------------------------------------------
@@ -51,7 +52,8 @@ class AiBot:
         self._running = False
 
     def clear_context(self) -> None:
-        self._contexts.clear()
+        with self._lock:
+            self._contexts.clear()
 
     def feed(self, ev: dict) -> None:
         if self._running:
@@ -59,11 +61,12 @@ class AiBot:
 
     # ------------------------------------------------------------------
     def _context(self, group_id: str) -> Deque[str]:
-        buf = self._contexts.get(group_id)
-        if buf is None:
-            buf = deque(maxlen=max(0, int(self.config.contextLength or 20)))
-            self._contexts[group_id] = buf
-        return buf
+        with self._lock:
+            buf = self._contexts.get(group_id)
+            if buf is None:
+                buf = deque(maxlen=max(0, int(self.config.contextLength or 20)))
+                self._contexts[group_id] = buf
+            return buf
 
     def _trigger_literals(self) -> List[str]:
         """The user-configured trigger word(s) as literal strings.
@@ -147,6 +150,9 @@ class AiBot:
         cooldown = int(self.config.cooldownSeconds or 0)
         if cooldown and now - self._last_reply_at.get(group_id, 0) < cooldown:
             return
+        # Record the attempt before calling the model: a failing LLM must not be
+        # hammered by every matching message (there is no reply to timestamp).
+        self._last_reply_at[group_id] = now
 
         reply = self._ask(group_id, sender, content, sender_id)
         if not reply:
@@ -154,10 +160,9 @@ class AiBot:
         reply = self._sanitize_reply(reply)
         if not reply:
             return
-        self._last_reply_at[group_id] = now
         sent = 0
         for line in self._split_reply(reply):
-            at = sender_id if (self.config.atReply and self.config.mentionReply) else ''
+            at = sender_id if self.config.atReply else ''
             if self._send_group(group_id, line, at):
                 self._log('ai', f'[{ev.get("groupName") or group_id}] 回复: {line}')
                 self._context(group_id).append(f'我: {line}')

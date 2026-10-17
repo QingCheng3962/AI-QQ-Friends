@@ -105,6 +105,10 @@ function startHealthCheck() {
         if (ok) {
             if (d.user_id) selfId = String(d.user_id);
             everOnline = true;
+            if (restricted) {
+                restricted = false;
+                log('info', 'QQ 已恢复在线。');
+            }
             if (!lastHealthOk) {
                 emitEvent({ event: 'status', state: 'connected', mode, selfId,
                             nickname: d.nickname || '' });
@@ -113,10 +117,12 @@ function startHealthCheck() {
         } else {
             lastHealthOk = false; healthFails += 1;
             if (everOnline && healthFails >= 3) {
-                restricted = true; autoReconnect = false; stopHealthCheck();
-                emitEvent({ event: 'restricted',
-                    message: 'QQ 可能离线或被限制（在线检测连续失败）。已停止自动重连。' });
-                setStatus('disconnected');
+                if (!restricted) {
+                    restricted = true;
+                    emitEvent({ event: 'restricted',
+                        message: 'QQ 可能离线或被限制（在线检测连续失败）。仍在低频重试，恢复后会自动继续。' });
+                    setStatus('disconnected');
+                }
             } else {
                 log('warn', '尚未检测到 QQ 在线（第 ' + healthFails + ' 次）。');
             }
@@ -155,7 +161,7 @@ function segmentText(seg) {
 
 function extractText(message) {
     if (message == null) return '';
-    if (typeof message === 'string') return message.trim();
+    if (typeof message === 'string') return sanitizeText(message.trim());
     if (!Array.isArray(message)) return '';
     let out = '';
     for (const seg of message) out += segmentText(seg);
@@ -163,7 +169,12 @@ function extractText(message) {
 }
 
 function isMentioned(message) {
-    if (!Array.isArray(message) || !selfId) return false;
+    if (!selfId) return false;
+    if (typeof message === 'string') {
+        // CQ-string form: [CQ:at,qq=<selfId>] or [CQ:at,qq=<selfId>,name=...]
+        return new RegExp('\\[CQ:at,[^\\]]*qq=' + selfId + '(?:,|\\])').test(message);
+    }
+    if (!Array.isArray(message)) return false;
     for (const seg of message) {
         if (seg && seg.type === 'at' && String((seg.data || {}).qq) === selfId) return true;
     }
@@ -171,6 +182,7 @@ function isMentioned(message) {
 }
 
 function isAtAll(message) {
+    if (typeof message === 'string') return /\[CQ:at,[^\]]*qq=all(?:,|\])/.test(message);
     if (!Array.isArray(message)) return false;
     for (const seg of message) {
         if (seg && seg.type === 'at' && String((seg.data || {}).qq) === 'all') return true;
@@ -226,6 +238,15 @@ function actionAsync(action, params, timeoutMs) {
         setTimeout(() => { if (pendingActions.has(echo)) { pendingActions.delete(echo); resolve(null); } },
             timeoutMs || 4000);
     });
+}
+
+// Fetch login info once right after connecting so @-mention detection works
+// immediately instead of waiting for the first meta_event / health check.
+function refreshSelfId() {
+    actionAsync('get_login_info', {}, 5000).then((res) => {
+        const d = res && res.data;
+        if (d && d.user_id != null) selfId = String(d.user_id);
+    }).catch(() => {});
 }
 
 function handleGroupList(data) {
@@ -304,8 +325,8 @@ function handleRaw(data) {
 
 function scheduleReconnect(reason) {
     if (stopped || mode !== 'forward') return;
-    if (restricted) { log('warn', '账号可能受限，已停止自动重连。'); return; }
     if (!autoReconnect) { log('info', '自动重连已关闭（' + reason + '）。'); return; }
+    if (restricted) log('warn', '账号可能受限，将以低频继续尝试重连。');
     retry += 1;
     const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(retry, 5)));
     log('warn', 'QQ 连接断开（' + reason + '），' + Math.round(delay / 1000) + ' 秒后重连…');
@@ -332,6 +353,7 @@ function connectForward() {
         log('info', '已连接 OneBot 正向 WebSocket: ' + url);
         setStatus('connected');
         sendAction('get_group_list', {}, 'get_group_list');
+        refreshSelfId();
         startHealthCheck();
     });
     ws.on('message', (data) => handleRaw(data));
@@ -377,6 +399,7 @@ function startReverse() {
         log('info', 'OneBot 反向连接已建立。');
         setStatus('connected');
         sendAction('get_group_list', {}, 'get_group_list');
+        refreshSelfId();
         startHealthCheck();
         ws.on('message', (data) => handleRaw(data));
         const drop = () => { clients.delete(ws); if (clients.size === 0) { stopHealthCheck(); setStatus('disconnected'); } };

@@ -161,8 +161,13 @@ class AiConfig:
             self.blacklist = []
         norm = []
         for b in self.blacklist:
-            if isinstance(b, dict) and str(b.get('id') or '').strip():
-                norm.append({'id': str(b['id']).strip(), 'name': str(b.get('name') or '')})
+            if isinstance(b, dict):
+                bid = str(b.get('id') or '').strip()
+                name = str(b.get('name') or '')
+            else:  # tolerate a hand-edited list of plain QQ numbers
+                bid, name = str(b or '').strip(), ''
+            if bid and not any(x['id'] == bid for x in norm):
+                norm.append({'id': bid, 'name': name})
         self.blacklist = norm
 
 
