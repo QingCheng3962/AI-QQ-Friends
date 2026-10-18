@@ -1,8 +1,10 @@
 """tkinter GUI for AI QQ Friends: 连接 / AI 配置 / 日志."""
 from __future__ import annotations
 
+import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, messagebox
 
 from .config import AppConfig, DEFAULT_BASE_URLS
@@ -242,9 +244,43 @@ class App:
         ttk.Entry(r, textvariable=self.var_song_cooldown, width=6).pack(side='left', padx=(4, 14))
         ttk.Label(r, text='搜索超时秒').pack(side='left')
         ttk.Entry(r, textvariable=self.var_song_timeout, width=6).pack(side='left', padx=4)
-        ttk.Label(sd, text='auto=先 QQ 音乐再网易云；两者都不可用时回退到可直链播放的备用音源。',
+        ttk.Label(sd, text='auto=先 QQ 音乐再网易云；登录网易云会员后，VIP 歌也能解析出完整可播放直链。',
                   foreground='#888888', wraplength=760, justify='left').grid(
             row=4, column=0, columnspan=3, sticky='w', pady=(4, 0))
+
+        # --- 网易云会员登录（替群友解析 VIP 歌的可播放直链）---
+        self.var_song_netease_cookie = tk.StringVar()
+        ttk.Label(sd, text='网易云登录（会员）').grid(row=5, column=0, sticky='w', padx=4, pady=2)
+        ttk.Entry(sd, textvariable=self.var_song_netease_cookie, width=40).grid(
+            row=5, column=1, sticky='we', padx=4, pady=2)
+        netease_btns = ttk.Frame(sd)
+        netease_btns.grid(row=5, column=2, sticky='w', padx=4)
+        ttk.Button(netease_btns, text='扫码登录', command=self._on_netease_login).pack(side='left')
+        ttk.Button(netease_btns, text='验证登录', command=self._on_netease_verify).pack(
+            side='left', padx=(4, 0))
+
+        qrrow = ttk.Frame(sd)
+        qrrow.grid(row=6, column=0, columnspan=3, sticky='w', padx=4, pady=4)
+        self._netease_qr_label = ttk.Label(qrrow)
+        self._netease_qr_label.pack(side='left')
+        self._netease_qr_photo = None
+        self._netease_url = ''
+        qrbtns = ttk.Frame(qrrow)
+        qrbtns.pack(side='left', anchor='n', padx=8)
+        ttk.Button(qrbtns, text='在浏览器打开登录链接',
+                   command=self._on_netease_open).pack(anchor='w', pady=2)
+        ttk.Button(qrbtns, text='复制登录链接',
+                   command=self._on_netease_copy).pack(anchor='w', pady=2)
+        self._netease_status = tk.StringVar(value='未登录（VIP 歌只能放试听）')
+        ttk.Label(sd, textvariable=self._netease_status, foreground='#888888',
+                  wraplength=760, justify='left').grid(
+            row=7, column=0, columnspan=3, sticky='w', padx=4, pady=(0, 4))
+        ttk.Label(sd, foreground='#888888', wraplength=760, justify='left',
+                  text='点「扫码登录」→ 上面直接出现二维码（也可用浏览器打开链接）→ '
+                       '用【网易云音乐 App】扫一扫并在手机上点确认；成功后 Cookie 会自动填入并保存。\n'
+                       '自己粘贴 Cookie 的话：把浏览器 music.163.com 的 Cookie（含 MUSIC_U=…）粘到上面，'
+                       '点「验证登录」——会显示账号昵称，并实测一首会员歌能不能拿到完整直链。').grid(
+            row=8, column=0, columnspan=3, sticky='w', padx=4)
         sd.columnconfigure(1, weight=1)
 
         af = ttk.LabelFrame(host, text='好感度（随聊天增长，会影响 AI 语气）', padding=8)
@@ -257,6 +293,9 @@ class App:
         self.var_aff_trigger = tk.StringVar()
         self.var_aff_hint = tk.BooleanVar(value=True)
         self.var_aff_persist = tk.BooleanVar(value=True)
+        self.var_aff_checkin = tk.BooleanVar(value=True)
+        self.var_aff_checkin_trigger = tk.StringVar()
+        self.var_aff_checkin_gain = tk.StringVar()
         ttk.Checkbutton(af, text='启用好感度', variable=self.var_aff_enabled).pack(
             anchor='w', padx=4, pady=2)
         r = ttk.Frame(af)
@@ -279,11 +318,28 @@ class App:
                         variable=self.var_aff_persist).pack(side='left', padx=(0, 12))
         ttk.Button(r2, text='清空好感度', command=self._on_clear_affinity).pack(side='left')
 
+        r3 = ttk.Frame(af)
+        r3.pack(fill='x', pady=(4, 0))
+        ttk.Checkbutton(r3, text='启用每日签到', variable=self.var_aff_checkin).pack(
+            side='left', padx=(4, 12))
+        ttk.Label(r3, text='签到触发词').pack(side='left')
+        ttk.Entry(r3, textvariable=self.var_aff_checkin_trigger, width=12).pack(
+            side='left', padx=(4, 14))
+        ttk.Label(r3, text='签到好感度 +').pack(side='left')
+        ttk.Entry(r3, textvariable=self.var_aff_checkin_gain, width=6).pack(side='left', padx=4)
+        ttk.Label(r3, text='（每天一次，不受每日上限限制）', foreground='#888888').pack(
+            side='left', padx=(4, 0))
+
     def _build_log_tab(self):
         tab = ttk.Frame(self.notebook, padding=6)
         self.notebook.add(tab, text=' 日志 ')
         self.log = tk.Text(tab, height=24, wrap='word', state='disabled', font=('Consolas', 9))
         self.log.pack(fill='both', expand=True)
+        # 日志着色：收到 / 回复 / 警告 / 错误
+        for tag, color in (('in', '#1565c0'), ('out', '#2e7d32'),
+                           ('warn', '#ef6c00'), ('error', '#c62828'),
+                           ('ai', '#6a1b9a')):
+            self.log.tag_configure(tag, foreground=color)
         sb = ttk.Scrollbar(tab, orient='vertical', command=self.log.yview)
         sb.pack(side='right', fill='y')
         self.log.configure(yscrollcommand=sb.set)
@@ -387,6 +443,11 @@ class App:
         self.var_song_platform.set(song.platform or 'auto')
         self.var_song_cooldown.set(str(song.cooldownSeconds))
         self.var_song_timeout.set(str(song.timeoutSeconds))
+        self.var_song_netease_cookie.set(song.neteaseCookie or '')
+        if hasattr(self, '_netease_status'):
+            self._netease_status.set('已登录（会员 Cookie 已保存）'
+                                     if (song.neteaseCookie or '').strip()
+                                     else '未登录（VIP 歌只能放试听）')
 
         aff = cfg.affinity
         self.var_aff_enabled.set(bool(aff.enabled))
@@ -397,6 +458,9 @@ class App:
         self.var_aff_cap.set(str(aff.dailyCap))
         self.var_aff_hint.set(bool(aff.promptHint))
         self.var_aff_persist.set(bool(aff.persist))
+        self.var_aff_checkin.set(bool(aff.checkinEnabled))
+        self.var_aff_checkin_trigger.set(aff.checkinTrigger or '')
+        self.var_aff_checkin_gain.set(str(aff.checkinGain))
 
     def _gather(self):
         cfg = self.controller.config
@@ -443,6 +507,7 @@ class App:
         song.platform = self.var_song_platform.get().strip() or 'auto'
         song.cooldownSeconds = self._int(self.var_song_cooldown.get(), 4)
         song.timeoutSeconds = self._int(self.var_song_timeout.get(), 8)
+        song.neteaseCookie = self.var_song_netease_cookie.get().strip()
 
         aff = cfg.affinity
         aff.enabled = self.var_aff_enabled.get()
@@ -453,6 +518,9 @@ class App:
         aff.dailyCap = self._int(self.var_aff_cap.get(), 20)
         aff.promptHint = self.var_aff_hint.get()
         aff.persist = self.var_aff_persist.get()
+        aff.checkinEnabled = self.var_aff_checkin.get()
+        aff.checkinTrigger = self.var_aff_checkin_trigger.get().strip()
+        aff.checkinGain = self._int(self.var_aff_checkin_gain.get(), 5)
 
         cfg.validate()
         cfg.save()
@@ -511,17 +579,20 @@ class App:
 
     # ------------------------------------------------------------------
     def _poll(self):
+        try:
+            self.controller.log_saver.maybe_roll()
+        except Exception:  # noqa: BLE001
+            pass
         for ev in self.controller.drain_ui():
             self._handle(ev)
         self.root.after(100, self._poll)
 
     def _handle(self, ev):
-        t = ev.get('event') or ev.get('kind')
-        if t in ('log',):
-            self._append(ev.get('message', ''), ev.get('level', 'info'))
-        elif t == 'error':
-            self._append(ev.get('message', ''), 'error')
-        elif t == 'status':
+        kind = ev.get('kind') or ev.get('event')
+        if kind == 'log':
+            self._append_raw(ev.get('line') or ev.get('message') or '',
+                             ev.get('level') or 'info')
+        elif kind == 'status':
             st = ev.get('state')
             if st == 'connected':
                 sid = ev.get('selfId') or ''
@@ -531,21 +602,170 @@ class App:
                 self.status.config(text='QQ 连接中…', foreground='#ffb74d')
             else:
                 self.status.config(text='QQ 未连接', foreground='#999999')
-        elif t == 'groups':
-            names = ev.get('groups') or []
-            if names:
-                self._append('群列表: ' + ', '.join(f"{g['name']}({g['id']})" for g in names), 'info')
-        elif t == 'restricted':
+        elif kind == 'restricted':
             self.status.config(text='QQ 受限/离线', foreground='#ff6b6b')
-        elif t == 'pong':
-            pass
 
-    def _append(self, text, tag='info'):
-        stamp = time.strftime('[%H:%M:%S] ')
+    def _append_raw(self, line, tag='info'):
+        """把一行（已带时间戳与格式）写进日志页。"""
         self.log.configure(state='normal')
-        self.log.insert('end', stamp + str(text) + '\n', tag)
+        self.log.insert('end', str(line) + '\n', tag)
         self.log.see('end')
         self.log.configure(state='disabled')
+
+    def _append(self, text, tag='info'):
+        """GUI 自己的提示：交给 controller 统一走日志页 + .log 落盘。"""
+        self.controller.notify(str(text), tag)
+
+    # ------------------------------------------------------------------
+    # 网易云会员登录（替群友解析 VIP 歌可播放直链）
+    # ------------------------------------------------------------------
+    def _ui(self, fn):
+        try:
+            self.root.after(0, fn)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_netease_login(self):
+        if getattr(self, '_netease_login_running', False):
+            self._append('网易云登录已在进行中…', 'warn')
+            return
+        self._netease_login_running = True
+        self._netease_status.set('正在获取二维码…')
+        self._append('正在获取网易云登录二维码…', 'info')
+        threading.Thread(target=self._netease_login_worker, daemon=True).start()
+
+    def _show_netease_qr(self, url):
+        """把登录链接画成二维码显示在界面里。"""
+        self._netease_url = url
+        try:
+            import qrcode
+            from PIL import ImageTk
+            img = qrcode.make(url).resize((200, 200))
+            photo = ImageTk.PhotoImage(img)
+            self._netease_qr_photo = photo   # 必须保留引用
+            self._netease_qr_label.configure(image=photo, text='')
+        except Exception as e:  # noqa: BLE001
+            self._netease_qr_photo = None
+            self._netease_qr_label.configure(
+                image='', text='（生成二维码失败：' + str(e) + '，请用下面按钮打开链接）')
+
+    def _on_netease_open(self):
+        if not self._netease_url:
+            self._append('还没有登录链接，先点「扫码登录」。', 'warn')
+            return
+        try:
+            webbrowser.open(self._netease_url)
+        except Exception as e:  # noqa: BLE001
+            self._append('打开浏览器失败：' + str(e), 'warn')
+
+    def _on_netease_copy(self):
+        if not self._netease_url:
+            self._append('还没有登录链接，先点「扫码登录」。', 'warn')
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(self._netease_url)
+            self._append('登录链接已复制到剪贴板。', 'info')
+        except Exception as e:  # noqa: BLE001
+            self._append('复制失败：' + str(e), 'warn')
+
+    def _netease_login_worker(self):
+        qr = None
+        try:
+            from . import netease
+            qr = netease.QrLogin()
+            unikey = qr.start()
+            if not unikey:
+                self._ui(lambda: self._netease_status.set('获取二维码失败（网易云接口无响应）'))
+                return
+            url = qr.login_url()
+            self._ui(lambda: self._show_netease_qr(url))
+            self._ui(lambda: self._netease_status.set('请用【网易云音乐 App】扫描上方二维码，并在手机上确认'))
+            self._ui(lambda: self._append('网易云扫码登录：二维码已显示在界面里。', 'info'))
+            scanned = False
+            for _ in range(120):
+                time.sleep(2)
+                code, cookie = qr.poll()
+                if code == 800:
+                    self._ui(lambda: self._netease_status.set('二维码已过期，请重新点「扫码登录」'))
+                    return
+                if code == 802:
+                    if not scanned:
+                        scanned = True
+                        self._ui(lambda: self._append('已扫码，请在手机上点「确认登录」。', 'info'))
+                    self._ui(lambda: self._netease_status.set('已扫码，请在手机上点「确认登录」…'))
+                elif code == 803:
+                    if not cookie:
+                        self._ui(lambda: self._netease_status.set('登录成功但没拿到 Cookie'))
+                        self._ui(lambda: self._append('网易云 803 但没有 MUSIC_U，请反馈。', 'warn'))
+                        return
+                    self._ui(lambda: self._apply_netease_cookie(cookie))
+                    return
+            self._ui(lambda: self._netease_status.set('登录超时，请重试'))
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            self._ui(lambda: self._netease_status.set('登录出错：' + msg))
+        finally:
+            if qr is not None:
+                qr.close()
+            self._netease_login_running = False
+
+    def _apply_netease_cookie(self, cookie):
+        """把扫码拿到的 Cookie 填进输入框并立即保存到 config.json。"""
+        try:
+            self.var_song_netease_cookie.set(cookie)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.controller.config.song.neteaseCookie = cookie
+            self.controller.config.save()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._netease_status.set('登录成功 ✅ 已保存会员 Cookie：' + (cookie[:24] + '…'))
+        except Exception:  # noqa: BLE001
+            pass
+        self._append('网易云登录成功，已保存会员 Cookie；现在可以替群友播放 VIP 歌了。', 'info')
+
+    def _on_netease_verify(self):
+        """验证输入框里的 Cookie：显示账号昵称，并实测一首会员歌能不能播放。"""
+        if getattr(self, '_netease_verify_running', False):
+            self._append('正在验证中，请稍候…', 'warn')
+            return
+        cookie = (self.var_song_netease_cookie.get() or '').strip()
+        if not cookie:
+            self._append('请先把网易云 Cookie 粘进输入框（含 MUSIC_U=…），再点「验证登录」。', 'warn')
+            return
+        self._netease_verify_running = True
+        self._netease_status.set('正在验证 Cookie…')
+        self._append('正在验证网易云 Cookie…', 'info')
+        threading.Thread(target=self._netease_verify_worker, args=(cookie,), daemon=True).start()
+
+    def _netease_verify_worker(self, cookie):
+        res = None
+        try:
+            from . import netease
+            res = netease.check_login(cookie)
+        except Exception as e:  # noqa: BLE001
+            res = {'ok': False, 'message': '验证出错：' + str(e)}
+        msg = (res or {}).get('message') or '验证失败'
+        ok = bool((res or {}).get('ok'))
+
+        def done():
+            self._netease_verify_running = False
+            try:
+                self._netease_status.set(msg)
+            except Exception:  # noqa: BLE001
+                pass
+            self._append(msg, 'info' if ok else 'warn')
+            if ok:
+                # 验证通过就顺手存进 config.json
+                try:
+                    self.controller.config.song.neteaseCookie = cookie
+                    self.controller.config.save()
+                except Exception:  # noqa: BLE001
+                    pass
+        self._ui(done)
 
     def _on_close(self):
         try:

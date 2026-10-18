@@ -20,6 +20,7 @@ class QqEngine:
         self.proc: Optional[subprocess.Popen] = None
         self._write_lock = threading.Lock()
         self._running = False
+        self._stopping = False
 
     @property
     def running(self) -> bool:
@@ -39,6 +40,7 @@ class QqEngine:
             stderr=subprocess.PIPE, text=True, encoding='utf-8',
             errors='replace', bufsize=1, **kwargs)
         self._running = True
+        self._stopping = False
         threading.Thread(target=self._read_stdout, daemon=True).start()
         threading.Thread(target=self._read_stderr, daemon=True).start()
 
@@ -61,6 +63,13 @@ class QqEngine:
             pass
         finally:
             self._running = False
+            # Notify the app when the engine exits on its own (crash / kill),
+            # so the UI does not keep showing "connected".
+            if not self._stopping and self.on_event:
+                try:
+                    self.on_event({'event': 'end', 'reason': 'engine-exited'})
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _read_stderr(self) -> None:
         try:
@@ -109,6 +118,7 @@ class QqEngine:
         return self.send({'type': 'ping'})
 
     def stop(self) -> None:
+        self._stopping = True
         try:
             self.send({'type': 'quit'})
         except Exception:  # noqa: BLE001

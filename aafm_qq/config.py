@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from typing import Any, Dict, List, Optional
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -185,6 +185,9 @@ class SongConfig:
     platform: str = 'auto'
     cooldownSeconds: int = 4            # 同一群两次点歌的最小间隔
     timeoutSeconds: int = 8             # 搜索接口超时
+    # 网易云会员登录 Cookie（含 MUSIC_U）。在「互动」页扫码 / 粘贴后自动写入，
+    # 用于替群友解析 VIP 歌的可播放直链（搜索本身匿名，不带它会返回空结果）。
+    neteaseCookie: str = ''
 
     def validate(self) -> None:
         self.enabled = bool(self.enabled)
@@ -193,6 +196,7 @@ class SongConfig:
             self.platform = 'auto'
         self.cooldownSeconds = _clamp_int(self.cooldownSeconds, 0, 3600)
         self.timeoutSeconds = _clamp_int(self.timeoutSeconds, 2, 60)
+        self.neteaseCookie = str(self.neteaseCookie or '').strip()
 
 
 @dataclass
@@ -208,6 +212,10 @@ class AffinityConfig:
     queryTrigger: str = '[好感度]'
     promptHint: bool = True    # 把好感度写进人设提示词，影响语气
     persist: bool = True       # 落盘到 affinity.json
+    # 每日签到：[签到] 每天一次，额外加好感度（不受「每人每天上限」限制）。
+    checkinEnabled: bool = True
+    checkinTrigger: str = '[签到]'
+    checkinGain: int = 5       # 每次签到加多少好感度
 
     def validate(self) -> None:
         self.enabled = bool(self.enabled)
@@ -218,6 +226,9 @@ class AffinityConfig:
         self.queryTrigger = str(self.queryTrigger or '').strip() or '[好感度]'
         self.promptHint = bool(self.promptHint)
         self.persist = bool(self.persist)
+        self.checkinEnabled = bool(self.checkinEnabled)
+        self.checkinTrigger = str(self.checkinTrigger or '').strip() or '[签到]'
+        self.checkinGain = _clamp_int(self.checkinGain, 0, 100)
 
 
 # Titles shown when a member checks their 好感度 (high → low).
@@ -313,13 +324,15 @@ class AppConfig:
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 if isinstance(data, dict):
+                    top_fields = {f.name for f in fields(cls)}
                     for k, v in data.items():
                         if k in _NESTED_CONFIGS and isinstance(v, dict):
                             obj = getattr(cfg, k)
+                            sub_fields = {f.name for f in fields(type(obj))}
                             for k2, v2 in v.items():
-                                if hasattr(obj, k2):
+                                if k2 in sub_fields:
                                     setattr(obj, k2, v2)
-                        elif hasattr(cfg, k):
+                        elif k in top_fields:  # only real config fields, never methods
                             setattr(cfg, k, v)
             except Exception as e:  # noqa: BLE001
                 print(f'[aiqq] Failed to read {path}, using defaults: {e}')

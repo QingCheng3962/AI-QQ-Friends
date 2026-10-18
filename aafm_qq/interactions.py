@@ -1,10 +1,11 @@
 """Group interactions that go beyond chatting.
 
-Currently two are handled here, both triggered by a message that **starts with**
+Currently three are handled here, all triggered by a message that **starts with**
 a configurable word (same convention as the AI trigger):
 
 - 点歌 (``[点歌] 歌名``): search a song and post an OneBot music card.
 - 好感度 (``[好感度]``): show the sender how much the bot likes them.
+- 签到 (``[签到]``): once-a-day bonus affinity (ignores the daily chat cap).
 
 Handled messages are consumed here and never reach the chat AI, so the large
 model does not also "answer" a command. This class also owns the :class:`Affinity`
@@ -69,6 +70,9 @@ class Interactions:
                 return True
 
         aff_cfg = self.config.affinity
+        if aff_cfg.checkinEnabled and _after_trigger(content, aff_cfg.checkinTrigger) is not None:
+            self._on_checkin(group_id, sender, sender_id)
+            return True
         if aff_cfg.enabled and _after_trigger(content, aff_cfg.queryTrigger) is not None:
             self._on_affinity(group_id, sender, sender_id)
             return True
@@ -101,6 +105,7 @@ class Interactions:
         self._log('info', f'[{gname}] 点歌: {keyword}')
         try:
             hit = song.search(keyword, cfg.platform, timeout=cfg.timeoutSeconds,
+                              cookie=cfg.neteaseCookie,
                               log=lambda m: self._log('warn', '点歌 · ' + m))
         except Exception as e:  # noqa: BLE001
             self._log('error', '点歌出错: ' + str(e))
@@ -124,6 +129,20 @@ class Interactions:
     # ------------------------------------------------------------------
     # 好感度
     # ------------------------------------------------------------------
+    def _on_checkin(self, group_id: str, sender: str, sender_id: str) -> None:
+        try:
+            res = self.affinity.checkin(group_id, sender_id, sender)
+        except Exception as e:  # noqa: BLE001
+            self._log('error', '签到出错: ' + str(e))
+            return
+        if res is None:
+            self._send_group(group_id, f'{sender} 今天已经签过到啦，明天再来～', sender_id)
+            return
+        text = (f'{sender} 签到成功！好感度 +{res["gained"]}，'
+                f'现在 {res["score"]}（{res["title"]}），已连签 {res["streak"]} 天。')
+        self._send_group(group_id, text, sender_id)
+        self._log('info', f'签到: {sender} +{res["gained"]} -> {res["score"]}')
+
     def _on_affinity(self, group_id: str, sender: str, sender_id: str) -> None:
         try:
             text = self.affinity.card(group_id, sender_id, sender)

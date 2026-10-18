@@ -21,13 +21,19 @@ from .ai_bot import AiBot
 from .config import AppConfig
 from .engine import QqEngine, BASE_DIR
 from .interactions import Interactions
+from .log_saver import LogSaver
 from .procutil import node_process_paths
+
+
+def _now() -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S')
 
 
 class Controller:
     def __init__(self) -> None:
         self.config = AppConfig.load()
         self.ui_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        self.log_saver = LogSaver(BASE_DIR)
 
         self._engine = QqEngine(cwd=BASE_DIR, on_event=self._on_event)
         self.interactions = Interactions(self.config, self._ai_send,
@@ -39,13 +45,33 @@ class Controller:
         self._running = False
         self._connected = False
         self._qq_nicknames: Dict[str, str] = {}
+        self._group_names: Dict[str, str] = {}
         self._snowluma_detected = ''
         self._snowluma_detect_at = 0.0
         self._snowluma_detected_marker = ''
         self._snowluma_uin = ''
 
+    # ------------------------------------------------------------------
+    # Logging: every line shown in the GUI is also buffered for the .log file.
+    # ------------------------------------------------------------------
+    def _emit(self, line: str, level: str = 'info',
+              group_id: str = '', group_name: str = '') -> None:
+        self.log_saver.record(line, group_id, group_name)
+        self.ui_queue.put({'kind': 'log', 'level': level, 'line': line})
+
+    def _sys(self, level: str, message: str) -> None:
+        """连接 / 系统日志行：[时间戳][系统] 内容。"""
+        self._emit(f'[{_now()}][系统] {message}', level, '000000', '系统')
+
     def _log(self, level: str, message: str) -> None:
-        self.ui_queue.put({'kind': 'log', 'level': level, 'message': message})
+        self._sys(level, message)
+
+    def notify(self, message: str, level: str = 'info') -> None:
+        """供 GUI 记录自己的提示（也会统一走日志页与 .log 文件）。"""
+        self._sys(level, message)
+
+    def _group_name(self, group_id: str) -> str:
+        return self._group_names.get(str(group_id), '')
 
     def drain_ui(self, max_items: int = 500) -> List[Dict[str, Any]]:
         out = []
@@ -57,14 +83,25 @@ class Controller:
         return out
 
     def _ai_send(self, group_id: str, text: str, at_sender: str = '') -> bool:
-        return self._engine.send_group(group_id, text, at_sender)
+        ok = self._engine.send_group(group_id, text, at_sender)
+        if ok:
+            self._emit(f'[{_now()}]Replay[{group_id}][bot] -> {text}',
+                       'out', group_id, self._group_name(group_id))
+        return ok
 
     def send_manual(self, group_id: str, text: str) -> bool:
         """Send a test message from the GUI. Returns whether it was queued."""
-        return self._engine.send_group(group_id, text)
+        return self._ai_send(group_id, text)
 
     def _send_music(self, group_id: str, **card) -> bool:
-        return self._engine.send_group_music(group_id, **card)
+        ok = self._engine.send_group_music(group_id, **card)
+        if ok:
+            title = card.get('title') or card.get('songId') or ''
+            artist = card.get('artist') or ''
+            label = f'{title} - {artist}' if artist else str(title)
+            self._emit(f'[{_now()}]Replay[{group_id}][bot] -> [音乐卡片] {label}',
+                       'out', group_id, self._group_name(group_id))
+        return ok
 
     # ------------------------------------------------------------------
     # OneBot endpoint auto-detection (SnowLuma / NapCat)
@@ -303,15 +340,64 @@ class Controller:
     # Events from the engine
     # ------------------------------------------------------------------
     def _on_event(self, ev: Dict[str, Any]) -> None:
-        self.ui_queue.put(ev)
-        if ev.get('event') != 'groupMessage':
+        etype = ev.get('event')
+        if etype == 'log':
+            self._sys(ev.get('level', 'info'), ev.get('message', ''))
             return
-        # Ignore our own messages so the bot never reacts to itself.
+        if etype == 'error':
+            self._sys('error', ev.get('message', ''))
+            return
+        if etype == 'status':
+            state = ev.get('state')
+            self.ui_queue.put({'kind': 'status', 'state': state,
+                               'selfId': ev.get('selfId') or ''})
+            if state == 'connected':
+                self._sys('info', 'QQ 已连接。')
+            elif state == 'disconnected':
+                self._sys('warn', 'QQ 连接断开。')
+            return
+        if etype == 'groups':
+            names = ev.get('groups') or []
+            for g in names:
+                if g and g.get('id') is not None:
+                    self._group_names[str(g['id'])] = str(g.get('name') or '')
+            if names:
+                self._sys('info', '群列表: ' + ', '.join(
+                    f"{g.get('name')}({g.get('id')})" for g in names))
+            return
+        if etype == 'restricted':
+            self.ui_queue.put({'kind': 'restricted'})
+            self._sys('warn', ev.get('message') or 'QQ 受限/离线。')
+            return
+        if etype == 'end':
+            reason = str(ev.get('reason') or ev.get('message') or '')
+            self.ui_queue.put({'kind': 'status', 'state': 'disconnected'})
+            if reason == 'quit':
+                self._sys('info', 'QQ 引擎已停止。')
+            else:
+                self._sys('error', 'QQ 引擎意外退出：' + reason)
+            return
+        if etype == 'groupMessage':
+            self._on_group_message(ev)
+            return
+        # pong / unknown: nothing to do
+
+    def _on_group_message(self, ev: Dict[str, Any]) -> None:
+        group_id = str(ev.get('groupId') or '')
+        group_name = ev.get('groupName') or self._group_name(group_id)
+        sender = ev.get('sender') or '群友'
         sender_id = str(ev.get('senderId') or '')
+        content = ev.get('content') or ''
+        if group_name:
+            self._group_names[group_id] = str(group_name)
+        # 收到的消息：统一格式并落盘。
+        self._emit(f'[{_now()}][群号：{group_id}][{sender_id}][{sender}]：{content}',
+                   'in', group_id, group_name)
+        # Ignore our own messages so the bot never reacts to itself.
         self_id = str(getattr(self.ai, 'self_id', '') or '')
         if self_id and sender_id and sender_id == self_id:
             return
-        # 点歌 / 好感度 等命令先处理；命中就不再交给聊天 AI。
+        # 点歌 / 好感度 / 签到 等命令先处理；命中就不再交给聊天 AI。
         try:
             if self.interactions.handle(ev):
                 return
@@ -346,3 +432,7 @@ class Controller:
 
     def shutdown(self) -> None:
         self.stop_qq()
+        try:
+            self.log_saver.flush()
+        except Exception:  # noqa: BLE001
+            pass

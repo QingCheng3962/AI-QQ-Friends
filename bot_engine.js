@@ -216,7 +216,10 @@ function rawSend(text) {
     if (mode === 'forward') {
         if (forwardWs && forwardWs.readyState === WebSocket.OPEN) { forwardWs.send(text); sent = true; }
     } else {
-        for (const ws of clients) if (ws.readyState === WebSocket.OPEN) { ws.send(text); sent = true; }
+        // 反向模式下可能有多个连接；只发给最新建立的活跃连接，避免指令/回复重复。
+        let target = null;
+        for (const ws of clients) if (ws.readyState === WebSocket.OPEN) target = ws;
+        if (target) { target.send(text); sent = true; }
     }
     return sent;
 }

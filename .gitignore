@@ -4,3 +4,4 @@ __pycache__/
 config.json
 runtime_config.json
 affinity.json
+logs/

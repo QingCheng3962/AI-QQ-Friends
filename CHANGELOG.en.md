@@ -6,8 +6,30 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added · NetEase member login (song direct links)
+
+- **Interaction → Song request** gains a **NetEase login (member)** box: scan-to-login (the QR code is drawn right in the UI) or paste a cookie and hit verify; on success it is written to and saved as `song.neteaseCookie`.
+- Same scheme as the parent project: **search is anonymous** (a logged-in cookie makes NetEase return empty results), and the member `MUSIC_U` cookie is only used to **resolve the playable direct link** — so VIP songs also post a fully playable `custom` card.
+- Falls back to a `163` card when not logged in / no direct link is available; "verify" shows the account nickname and probes a member-only song.
+
+### Added · Daily check-in
+
+- A member sends the "check-in trigger" (default `[签到]`) once per day to gain extra affinity (default +5).
+- The check-in bonus **ignores the per-day cap** and records a consecutive-day streak.
+- Configurable: on/off, trigger word, amount per check-in.
+
+### Added · Chat logs on disk
+
+- The log page now uses one format: incoming `[date time][group：id][user QQ][user name]：text`, replies `[date time]Replay[group id][bot] -> text`, system `[date time][系统] text`.
+- On close, every chat / reply / connection-system line is saved to `logs/[date][group id][group name][save count].log` (connection lines go to `logs/[date][000000][系统][save count].log`).
+- Closing the program several times in one day bumps the save count (1, 2, 3 …) without overwriting history; a day rollover while running also saves once.
+
 ### Fixed
 
+- **Group messages are logged**: incoming group messages now reach the log page and the saved files (previously there was no branch for them).
+- **NetEase song requests**: uses the official endpoint plus the member cookie to resolve a playable direct link, dropping the now-broken third-party fallback (whose `custom` links often failed to play).
+- **Engine exiting unexpectedly**: a crashed / killed child process now notifies the UI and flips it to "not connected" instead of keeping the connected state.
+- **Reverse mode with multiple connections**: the OneBot reverse listener now sends commands / replies only to the **newest** connection, avoiding duplicates.
 - **"@ the sender in replies"** now depends only on its own toggle; it no longer also requires "reply when @-mentioned".
 - **A false "restricted" verdict no longer wedges the bot**: consecutive online-check failures are now advisory — it keeps retrying at a low frequency and resumes automatically once back online (previously it permanently stopped auto-reconnect *and* the online check).
 - **Affinity display** uses the configured maximum instead of a hard-coded 100 (the query progress bar scales proportionally).

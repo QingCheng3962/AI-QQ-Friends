@@ -55,7 +55,8 @@
     "trigger": "[点歌]",
     "platform": "auto",
     "cooldownSeconds": 4,
-    "timeoutSeconds": 8
+    "timeoutSeconds": 8,
+    "neteaseCookie": ""
   },
   "affinity": {
     "enabled": true,
@@ -65,6 +66,9 @@
     "dailyCap": 20,
     "queryTrigger": "[好感度]",
     "promptHint": true,
-    "persist": true
+    "persist": true,
+    "checkinEnabled": true,
+    "checkinTrigger": "[签到]",
+    "checkinGain": 5
   }
 }

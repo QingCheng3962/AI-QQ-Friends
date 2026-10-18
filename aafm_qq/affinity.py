@@ -87,8 +87,12 @@ class Affinity:
         return affinity_title(int(score))
 
     def add(self, group_id: str, user_id: str, name: str = '',
-            amount: Optional[int] = None) -> int:
-        """Increase a member's score (respecting the daily cap). Returns it."""
+            amount: Optional[int] = None, ignore_daily_cap: bool = False) -> int:
+        """Increase a member's score (respecting the daily cap). Returns it.
+
+        ``ignore_daily_cap`` is used by the daily check-in so a check-in bonus is
+        never swallowed by the "每 chat 每天上限".
+        """
         cfg = self.config
         gain = int(cfg.gainPerChat if amount is None else amount)
         if gain <= 0:
@@ -100,15 +104,39 @@ class Affinity:
                 rec['day'] = day
                 rec['today'] = 0
             allowed = gain
-            if cfg.dailyCap > 0:
+            if cfg.dailyCap > 0 and not ignore_daily_cap:
                 allowed = min(gain, max(0, cfg.dailyCap - int(rec.get('today', 0))))
             if allowed <= 0:
                 return int(rec.get('score', cfg.start))
             rec['score'] = min(int(cfg.maximum), int(rec.get('score', cfg.start)) + allowed)
-            rec['today'] = int(rec.get('today', 0)) + allowed
+            if not ignore_daily_cap:
+                rec['today'] = int(rec.get('today', 0)) + allowed
             score = int(rec['score'])
         self.save()
         return score
+
+    def checkin(self, group_id: str, user_id: str, name: str = '') -> Optional[dict]:
+        """每日签到：一天一次，额外加好感度（不受每日上限约束）。
+
+        返回 ``{'gained', 'score', 'streak', 'title'}``；今天已签过返回 ``None``。
+        """
+        cfg = self.config
+        if not cfg.checkinEnabled:
+            return None
+        today = time.strftime('%Y-%m-%d')
+        yesterday = time.strftime('%Y-%m-%d', time.localtime(time.time() - 86400))
+        with self._lock:
+            rec = self._entry(group_id, user_id, name)
+            if rec.get('checkin') == today:
+                return None
+            streak = int(rec.get('streak') or 0) + 1 if rec.get('checkin') == yesterday else 1
+            rec['checkin'] = today
+            rec['streak'] = streak
+            before = int(rec.get('score', cfg.start))
+        after = self.add(group_id, user_id, name, amount=cfg.checkinGain,
+                         ignore_daily_cap=True)
+        return {'gained': max(0, after - before), 'score': after,
+                'streak': streak, 'title': self.title(after)}
 
     # ------------------------------------------------------------------
     def hint(self, group_id: str, user_id: str, name: str = '') -> str:

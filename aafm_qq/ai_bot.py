@@ -164,7 +164,6 @@ class AiBot:
         for line in self._split_reply(reply):
             at = sender_id if self.config.atReply else ''
             if self._send_group(group_id, line, at):
-                self._log('ai', f'[{ev.get("groupName") or group_id}] 回复: {line}')
                 self._context(group_id).append(f'我: {line}')
                 sent += 1
             time.sleep(0.6)
