@@ -12,6 +12,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Same scheme as the parent project: **search is anonymous** (a logged-in cookie makes NetEase return empty results), and the member `MUSIC_U` cookie is only used to **resolve the playable direct link** — so VIP songs also post a fully playable `custom` card.
 - Falls back to a `163` card when not logged in / no direct link is available; "verify" shows the account nickname and probes a member-only song.
 
+### Added · Video recommendations
+
+- The **Misc** tab adds **video recommendations**: a member sends "trigger + 视频推荐" (default `[视频推荐]`) to post a batch of Bilibili videos in the group.
+- Five sources (anime ranking / Bilibili home feed / home popular / site ranking / my favorites). The cooldown is **shared across all users** and asking again after it expires fetches a **fresh batch** (recent ids are remembered per source, so repeated requests keep giving new items).
+- For the "my favorites" source, **paste the whole Bilibili cookie directly** (or just the `SESSDATA` value), then click "read favorites" to verify and pick a folder; items are sampled by randomly paging the folder.
+- The home-feed endpoint warms up by visiting the homepage once to obtain `buvid3` (otherwise `-412 request was banned`); its `ps` may only be 12.
+
 ### Added · Daily check-in
 
 - A member sends the "check-in trigger" (default `[签到]`) once per day to gain extra affinity (default +5).

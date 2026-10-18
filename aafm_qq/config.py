@@ -8,6 +8,7 @@ Persisted to ``config.json`` next to the program (gitignored). Two parts:
                 each has its own launcher path, port and token.
 - ``song``    : 点歌 (song request) — search a song and post a music card.
 - ``affinity``: 好感度 (favour) — a per-member score that colours the persona.
+- ``misc``    : 杂项 — 视频推荐 (Bilibili video recommendations).
 """
 from __future__ import annotations
 
@@ -249,11 +250,74 @@ def affinity_title(score: int) -> str:
     return AFFINITY_TITLES[-1][1]
 
 
+# 视频推荐来源（GUI「杂项」页的下拉框按这个顺序 + `_VIDEO_SOURCE_KEYS` 对应）
+VIDEO_SOURCES = {
+    'anime': '番剧追番榜',        # pgc/web/rank/list?season_type=1
+    'home': 'B 站首页推荐',       # x/web-interface/index/top/rcmd（首页那排，需先拿 buvid3）
+    'hot': 'B 站首页热门',        # x/web-interface/popular
+    'rank': 'B 站全站排行',       # x/web-interface/ranking/v2
+    'fav': '我的收藏夹（登录）',   # x/v3/fav/resource/list（需 SESSDATA）
+}
+
+
+@dataclass
+class MiscConfig:
+    """杂项：视频推荐。
+
+    群友发「触发词 + 视频推荐」（默认 ``[视频推荐]``）即在群里推一批 B 站视频；
+    冷却**全服共用**（谁的请求都算），冷却过后再点会**重新抓一批新的**
+    （按来源各自记住最近推过的 id，越点越多、不重复）。
+    """
+    videoEnabled: bool = True
+    videoTrigger: str = '[视频推荐]'
+    # anime=番剧追番榜（默认）/ home=B 站首页推荐 / hot=B 站首页热门 /
+    # rank=B 站全站排行 / fav=我的收藏夹（要 Cookie）
+    videoSource: str = 'anime'
+    videoCount: int = 5                 # 一次推几条
+    videoCooldownSeconds: int = 30      # 全服共用冷却（秒）
+    # 抬头文案：{player} 谁点的、{count} 条数、{source} 来源名
+    videoTitle: str = '【视频推荐】{player} 点的{source}前 {count} 条：'
+    # 每条文案：{index} 序号、{title} 标题、{owner} 备注（UP主/更新进度）、{link} 链接
+    videoItemText: str = '{index}. {title} {owner} {link}'
+    videoCoolText: str = '【视频推荐】刚推过啦，{wait} 秒后再来（会换一批新的）'
+    videoFailText: str = '【视频推荐】B 站接口暂时抽风了，稍等一下再试~'
+    # 来源选「我的收藏夹」时才需要：B 站登录 Cookie（整条或只填 SESSDATA 值都行）
+    biliCookie: str = ''
+    biliFavMediaId: int = 0             # 收藏夹 id（GUI 可点「读取收藏夹」自动填）
+    biliFavName: str = ''               # 收藏夹名字（显示用）
+
+    def validate(self) -> None:
+        self.videoEnabled = bool(self.videoEnabled)
+        self.videoTrigger = str(self.videoTrigger or '').strip() or '[视频推荐]'
+        src = str(self.videoSource or 'anime').strip().lower()
+        self.videoSource = src if src in VIDEO_SOURCES else 'anime'
+        self.videoCount = _clamp_int(self.videoCount, 1, 10)
+        self.videoCooldownSeconds = _clamp_int(self.videoCooldownSeconds, 0, 3600)
+        self.videoTitle = (str(self.videoTitle or '').strip()
+                           or '【视频推荐】{player} 点的{source}前 {count} 条：')
+        self.videoItemText = (str(self.videoItemText or '').strip()
+                              or '{index}. {title} {owner} {link}')
+        self.videoCoolText = (str(self.videoCoolText or '').strip()
+                              or '【视频推荐】刚推过啦，{wait} 秒后再来（会换一批新的）')
+        self.videoFailText = (str(self.videoFailText or '').strip()
+                              or '【视频推荐】B 站接口暂时抽风了，稍等一下再试~')
+        self.biliCookie = str(self.biliCookie or '').strip()
+        self.biliFavMediaId = _clamp_int(self.biliFavMediaId, 0, 999_999_999)
+        self.biliFavName = str(self.biliFavName or '').strip()
+
+    def source_name(self) -> str:
+        """来源的中文名（给文案里的 {source} 用）。"""
+        if (self.videoSource or '') == 'fav' and (self.biliFavName or '').strip():
+            return '收藏夹「%s」' % str(self.biliFavName).strip()[:20]
+        return VIDEO_SOURCES.get(self.videoSource or 'anime', VIDEO_SOURCES['anime'])
+
+
 # Sub-dataclasses nested inside AppConfig (JSON object -> validated instance).
 _NESTED_CONFIGS = {
     'ai': AiConfig,
     'song': SongConfig,
     'affinity': AffinityConfig,
+    'misc': MiscConfig,
 }
 
 
@@ -271,6 +335,7 @@ class AppConfig:
     ai: AiConfig = field(default_factory=AiConfig)
     song: SongConfig = field(default_factory=SongConfig)
     affinity: AffinityConfig = field(default_factory=AffinityConfig)
+    misc: MiscConfig = field(default_factory=MiscConfig)
 
     def active(self) -> OneBotConfig:
         return self.napcat if self.framework == 'napcat' else self.snowluma

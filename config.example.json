@@ -70,5 +70,19 @@
     "checkinEnabled": true,
     "checkinTrigger": "[签到]",
     "checkinGain": 5
+  },
+  "misc": {
+    "videoEnabled": true,
+    "videoTrigger": "[视频推荐]",
+    "videoSource": "anime",
+    "videoCount": 5,
+    "videoCooldownSeconds": 30,
+    "videoTitle": "【视频推荐】{player} 点的{source}前 {count} 条：",
+    "videoItemText": "{index}. {title} {owner} {link}",
+    "videoCoolText": "【视频推荐】刚推过啦，{wait} 秒后再来（会换一批新的）",
+    "videoFailText": "【视频推荐】B 站接口暂时抽风了，稍等一下再试~",
+    "biliCookie": "",
+    "biliFavMediaId": 0,
+    "biliFavName": ""
   }
 }

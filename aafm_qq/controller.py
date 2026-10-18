@@ -415,6 +415,7 @@ class Controller:
         self.config.ai.validate()
         self.config.song.validate()
         self.config.affinity.validate()
+        self.config.misc.validate()
         self.ai.load(self.config.ai)
         self.interactions.load(self.config)
         self._log('info', 'AI / 互动配置已重载。')

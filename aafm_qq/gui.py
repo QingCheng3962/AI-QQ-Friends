@@ -35,6 +35,11 @@ class ScrollFrame(ttk.Frame):
 
 
 class App:
+    # 视频推荐来源：顺序必须和 config.VIDEO_SOURCES 一致
+    _VIDEO_SOURCE_LABELS = ['番剧追番榜（追番）', 'B 站首页推荐（主页）', 'B 站首页热门',
+                            'B 站全站排行', '我的收藏夹（要登录 B 站）']
+    _VIDEO_SOURCE_KEYS = ['anime', 'home', 'hot', 'rank', 'fav']
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.controller = Controller()
@@ -48,6 +53,7 @@ class App:
         self._build_connect_tab()
         self._build_ai_tab()
         self._build_interact_tab()
+        self._build_misc_tab()
         self._build_log_tab()
         self._load_config()
         root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -330,6 +336,76 @@ class App:
         ttk.Label(r3, text='（每天一次，不受每日上限限制）', foreground='#888888').pack(
             side='left', padx=(4, 0))
 
+    def _build_misc_tab(self):
+        host = ttk.Frame(self.notebook, padding=8)
+        self.notebook.add(host, text=' 杂项 ')
+        sc = ScrollFrame(host)
+        sc.pack(fill='both', expand=True)
+
+        video = ttk.LabelFrame(
+            sc.inner,
+            text='视频推荐（群友发「触发词 + 视频推荐」→ 群里推一批 B 站视频）', padding=8)
+        video.pack(fill='x', pady=(6, 4))
+        self.var_misc_video_enabled = tk.BooleanVar(value=True)
+        self.var_misc_video_trigger = tk.StringVar()
+        self.var_misc_video_source = tk.StringVar(value=self._VIDEO_SOURCE_LABELS[0])
+        self.var_misc_video_count = tk.StringVar(value='5')
+        self.var_misc_video_cooldown = tk.StringVar(value='30')
+        self.var_misc_video_title = tk.StringVar()
+        self.var_misc_video_item = tk.StringVar()
+        self.var_misc_video_cool = tk.StringVar()
+        self.var_misc_video_fail = tk.StringVar()
+        ttk.Checkbutton(video, text='启用视频推荐', variable=self.var_misc_video_enabled).grid(
+            row=0, column=0, columnspan=2, sticky='w', padx=4, pady=2)
+        self._row(video, 1, '触发词（必须开头）', self.var_misc_video_trigger, width=18,
+                  hint='例如 [视频推荐]；命中后不再交给 AI 聊天')
+        ttk.Label(video, text='推荐来源').grid(row=2, column=0, sticky='w', padx=4, pady=2)
+        ttk.Combobox(video, textvariable=self.var_misc_video_source, state='readonly',
+                     values=self._VIDEO_SOURCE_LABELS, width=24).grid(
+            row=2, column=1, sticky='w', padx=4, pady=2)
+        r = ttk.Frame(video)
+        r.grid(row=3, column=0, columnspan=3, sticky='w', pady=2)
+        ttk.Label(r, text='每次推几条').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_misc_video_count, width=6).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='全服冷却秒').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_misc_video_cooldown, width=8).pack(side='left', padx=(4, 8))
+        ttk.Label(r, text='谁的请求都算；冷却过后再发 = 换一批新的（越点越多）',
+                  foreground='#888888').pack(side='left')
+        self._row(video, 4, '抬头文案', self.var_misc_video_title, width=52,
+                  hint='可用 {player} 谁点的、{count} 条数、{source} 来源名')
+        self._row(video, 5, '每条文案', self.var_misc_video_item, width=52,
+                  hint='可用 {index} 序号、{title} 标题、{owner} 备注、{link} 链接')
+        self._row(video, 6, '冷却中提示', self.var_misc_video_cool, width=52,
+                  hint='可用 {wait} 还要等几秒、{player} 谁点的')
+        self._row(video, 7, '抓取失败提示', self.var_misc_video_fail, width=52)
+
+        bili = ttk.LabelFrame(video, text='B 站账号（只有来源选「我的收藏夹」才需要）', padding=6)
+        bili.grid(row=8, column=0, columnspan=4, sticky='we', padx=4, pady=(8, 4))
+        self.var_misc_bili_cookie = tk.StringVar()
+        self.var_misc_bili_fav = tk.StringVar()
+        self.var_misc_bili_status = tk.StringVar(value='（还没读取）')
+        self._bili_fav_map = {}
+        self._bili_fav_cur = {'media_id': 0, 'name': ''}
+        ttk.Label(bili, text='SESSDATA').grid(row=0, column=0, sticky='w', padx=4, pady=3)
+        ttk.Entry(bili, textvariable=self.var_misc_bili_cookie, width=44, show='*').grid(
+            row=0, column=1, sticky='we', padx=4, pady=3)
+        ttk.Button(bili, text='读取收藏夹', command=self._on_bili_folders).grid(
+            row=0, column=2, sticky='w', padx=4, pady=3)
+        ttk.Label(bili, textvariable=self.var_misc_bili_status,
+                  foreground='#888888').grid(row=0, column=3, sticky='w', padx=4)
+        ttk.Label(bili, text='收藏夹').grid(row=1, column=0, sticky='w', padx=4, pady=3)
+        self.cmb_bili_fav = ttk.Combobox(bili, textvariable=self.var_misc_bili_fav,
+                                         width=36, values=[])
+        self.cmb_bili_fav.grid(row=1, column=1, sticky='w', padx=4, pady=3)
+        ttk.Label(bili, text='点上面按钮读出来再选；也可以直接填收藏夹 id（纯数字）',
+                  foreground='#888888').grid(row=1, column=2, columnspan=2, sticky='w', padx=4)
+        ttk.Label(bili, text='拿法：浏览器登录 bilibili.com → F12 → Application → Cookies，'
+                             '把整条 Cookie 粘进来（或只填 SESSDATA 的值），再点「读取收藏夹」选一个。',
+                  foreground='#888888', wraplength=760, justify='left').grid(
+            row=2, column=1, columnspan=3, sticky='w', padx=4, pady=(2, 0))
+        bili.columnconfigure(1, weight=1)
+        video.columnconfigure(1, weight=1)
+
     def _build_log_tab(self):
         tab = ttk.Frame(self.notebook, padding=6)
         self.notebook.add(tab, text=' 日志 ')
@@ -462,6 +538,25 @@ class App:
         self.var_aff_checkin_trigger.set(aff.checkinTrigger or '')
         self.var_aff_checkin_gain.set(str(aff.checkinGain))
 
+        misc = cfg.misc
+        self.var_misc_video_enabled.set(bool(misc.videoEnabled))
+        self.var_misc_video_trigger.set(misc.videoTrigger or '')
+        self.var_misc_video_source.set(dict(zip(self._VIDEO_SOURCE_KEYS,
+                                                self._VIDEO_SOURCE_LABELS)).get(
+            misc.videoSource, self._VIDEO_SOURCE_LABELS[0]))
+        self.var_misc_video_count.set(str(misc.videoCount))
+        self.var_misc_video_cooldown.set(str(misc.videoCooldownSeconds))
+        self.var_misc_video_title.set(misc.videoTitle)
+        self.var_misc_video_item.set(misc.videoItemText)
+        self.var_misc_video_cool.set(misc.videoCoolText)
+        self.var_misc_video_fail.set(misc.videoFailText)
+        self.var_misc_bili_cookie.set(misc.biliCookie or '')
+        self._bili_fav_cur = {'media_id': int(misc.biliFavMediaId or 0),
+                              'name': str(misc.biliFavName or '')}
+        self.var_misc_bili_fav.set(str(misc.biliFavName or ''))
+        self.var_misc_bili_status.set(
+            '已配置：%s' % misc.biliFavName if misc.biliFavName else '（还没读取）')
+
     def _gather(self):
         cfg = self.controller.config
         cfg.framework = ('napcat' if self.var_fw.get().strip().lower().startswith('nap')
@@ -522,6 +617,32 @@ class App:
         aff.checkinTrigger = self.var_aff_checkin_trigger.get().strip()
         aff.checkinGain = self._int(self.var_aff_checkin_gain.get(), 5)
 
+        misc = cfg.misc
+        misc.videoEnabled = self.var_misc_video_enabled.get()
+        misc.videoTrigger = self.var_misc_video_trigger.get().strip()
+        label = self.var_misc_video_source.get().strip()
+        misc.videoSource = dict(zip(self._VIDEO_SOURCE_LABELS,
+                                    self._VIDEO_SOURCE_KEYS)).get(
+            label, misc.videoSource or 'anime')
+        misc.videoCount = self._int(self.var_misc_video_count.get(), 5)
+        misc.videoCooldownSeconds = self._int(self.var_misc_video_cooldown.get(), 30)
+        misc.videoTitle = self.var_misc_video_title.get().strip()
+        misc.videoItemText = self.var_misc_video_item.get().strip()
+        misc.videoCoolText = self.var_misc_video_cool.get().strip()
+        misc.videoFailText = self.var_misc_video_fail.get().strip()
+        misc.biliCookie = self.var_misc_bili_cookie.get().strip()
+        sel = (self.var_misc_bili_fav.get() or '').strip()
+        folder = self._bili_fav_map.get(sel) if sel else None
+        if folder:
+            misc.biliFavMediaId = int(folder.get('media_id') or 0)
+            misc.biliFavName = str(folder.get('title') or '')
+        elif sel.isdigit():
+            misc.biliFavMediaId = int(sel)
+            misc.biliFavName = ''
+        else:                                   # 没重新读收藏夹：保留原来配的那个
+            misc.biliFavMediaId = int(self._bili_fav_cur.get('media_id') or 0)
+            misc.biliFavName = str(self._bili_fav_cur.get('name') or '')
+
         cfg.validate()
         cfg.save()
 
@@ -565,6 +686,60 @@ class App:
     def _on_clear_affinity(self):
         self.controller.clear_affinity()
         self._append('好感度已清空。')
+
+    # ------------------------------------------------------------------
+    # B 站（视频推荐「我的收藏夹」来源用）
+    # ------------------------------------------------------------------
+    def _on_bili_folders(self):
+        """读 B 站收藏夹：验证 Cookie + 把收藏夹填进下拉框。"""
+        cookie = (self.var_misc_bili_cookie.get() or '').strip()
+        if not cookie:
+            messagebox.showinfo('AI QQ Friends',
+                                '先在左边填 SESSDATA（或整条 Cookie），再点「读取收藏夹」。')
+            return
+        self.var_misc_bili_status.set('正在读取…')
+
+        def work():
+            from . import bilibili
+            info = bilibili.login_info(cookie)
+            if not info.get('ok'):
+                msg = '❌ ' + str(info.get('message') or 'Cookie 无效')
+                self._ui(lambda: self.var_misc_bili_status.set(msg))
+                return
+            res = bilibili.fav_folders(cookie)
+            name = str(info.get('name') or '')
+
+            def apply():
+                if not res.get('ok'):
+                    self.var_misc_bili_status.set('❌ ' + str(res.get('message') or '没读到'))
+                    return
+                folders = res.get('folders') or []
+                self._bili_fav_map = {}
+                labels = []
+                for f in folders:
+                    label = '%s（%s 个）' % (str(f.get('title') or ''),
+                                          int(f.get('count') or 0))
+                    self._bili_fav_map[label] = f
+                    labels.append(label)
+                self.cmb_bili_fav.configure(values=labels)
+                self.var_misc_bili_status.set('✅ %s：%s 个收藏夹' % (name or '已登录', len(labels)))
+                cur = int(self._bili_fav_cur.get('media_id') or 0)
+                for label, f in self._bili_fav_map.items():
+                    if int(f.get('media_id') or 0) == cur:
+                        self.var_misc_bili_fav.set(label)
+                        self._bili_fav_cur = {'media_id': cur, 'name': str(f.get('title') or '')}
+                        break
+                else:
+                    if not (self.var_misc_bili_fav.get() or '').strip() and labels:
+                        first = self._bili_fav_map[labels[0]]
+                        self.var_misc_bili_fav.set(labels[0])
+                        self._bili_fav_cur = {'media_id': int(first.get('media_id') or 0),
+                                              'name': str(first.get('title') or '')}
+                self._append(f'已读取 B 站收藏夹：{name}，共 {len(labels)} 个', 'info')
+
+            self._ui(apply)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_manual_send(self):
         gid = self.send_group_id.get().strip()
