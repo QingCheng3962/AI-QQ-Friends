@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-> Current version **v0.1.1** · See [CHANGELOG.en.md](CHANGELOG.en.md) for the changelog
+> Current version **v0.1.2** · See [CHANGELOG.en.md](CHANGELOG.en.md) for the changelog
 
 Plug a large language model into a QQ group and let it become a **group member that actually chats**: when a message **starts with** the trigger word (default `[AI]`), it replies like a real netizen — bantering, keeping up with memes, answering questions — with **prompt-injection protection + language filtering** on the output.
 

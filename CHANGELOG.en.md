@@ -4,7 +4,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.2] - 2026-10-18
 
 ### Added · NetEase member login (song direct links)
 
