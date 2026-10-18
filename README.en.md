@@ -6,7 +6,7 @@
 
 Plug a large language model into a QQ group and let it become a **group member that actually chats**: when a message **starts with** the trigger word (default `[AI]`), it replies like a real netizen — bantering, keeping up with memes, answering questions — with **prompt-injection protection + language filtering** on the output.
 
-- A Python tkinter GUI (**Connect / AI Config / Interactions / Log** — four tabs). Double-click to run, tune everything visually.
+- A Python tkinter GUI (**Connect / AI Config / Interactions / Misc / Log** — five tabs). Double-click to run, tune everything visually. (Setup & usage guide: [使用说明.md](使用说明.md), Chinese.)
 - Connects to QQ over **OneBot 11**, supports **SnowLuma / NapCat**, and can launch them for you with one click.
 - LLMs: **OpenAI-compatible** (OpenAI, DeepSeek, Moonshot, Ollama, …) and **Anthropic**.
 - In-group fun: **song requests** (`[点歌] <song>` posts a music card) and **affinity** (grows as people chat and colours the AI's tone).
@@ -29,7 +29,9 @@ Plug a large language model into a QQ group and let it become a **group member t
 - **In-group interactions**
   - **Song request**: a member sends “trigger word + song name” (default `[点歌] 起风了`) and the bot searches and posts a **music card**. The order is QQ Music → NetEase Cloud; if neither works it falls back to a directly playable alternate source (a `custom` card). A message consumed by a song request is **not** handed to the chat AI.
   - **Affinity**: every member has a 0–100 score with the bot that **grows when they chat with it** (with a daily cap). It is written into the persona prompt so the tone feels more natural (the closer, the warmer); members can send the “query trigger” (default `[好感度]`) to see their score and title. Optionally persisted to `affinity.json`.
-- **In-app conversation**: the Log tab shows connection status, group messages and AI replies in real time, and can **send test messages manually**.
+  - **Daily check-in**: a member sends the check-in trigger (default `[签到]`) once a day for bonus affinity (default +5, **not limited by the daily cap**), and a consecutive-day count is kept.
+  - **Video recommendations**: a member sends “trigger + 视频推荐” (default `[视频推荐]`) to post a batch of Bilibili videos. Five sources: anime ranking (default) / Bilibili home feed / home popular / site ranking / my favorites (needs login). The cooldown is **shared across all users**, and asking again after it expires fetches a **fresh batch**.
+- **In-app conversation**: the Log tab shows connection status, group messages and AI replies in real time (all in one unified format and written to `logs/` when you close the app), and can **send test messages manually**.
 
 ## Requirements
 
