@@ -8,13 +8,15 @@
 //   {"event":"log","level":..., "message":...}
 //   {"event":"status","state":"connected"|"disconnected","selfId":...}
 //   {"event":"groups","groups":[{id,name}]}
-//   {"event":"groupMessage","groupId","groupName","sender","senderId","content","mentioned":bool,"atAll":bool,"raw":...}
+//   {"event":"groupMessage","groupId","groupName","sender","senderId","content","mentioned":bool,"atAll":bool,"messageId","raw":...}
+//   {"event":"poke","groupId","userId","targetId","isTargetMe":bool,"isFromMe":bool}
 //   {"event":"error","message":...}
 //   {"event":"end","reason":...}
 // Commands (stdin, one JSON per line):
-//   {"type":"sendGroup","groupId":...,"text":...,"atSender":bool}
+//   {"type":"sendGroup","groupId":...,"text":...,"atSender":bool,"replyTo":messageId}
 //   {"type":"sendGroupMusic","groupId":...,"platform":"qq"|"163"|"custom",
 //    "songId":...,"title":...,"audio":...,"url":...,"image":...}
+//   {"type":"action","action":"send_poke","params":{...}}   // any OneBot 11 action
 //   {"type":"setGroups","groups":[...]} / {"type":"setIgnoreGroups","groups":[...]}
 //   {"type":"ping"} / {"type":"quit"}
 
@@ -283,6 +285,30 @@ function handleObj(obj) {
         }
         return;
     }
+    if (obj.post_type === 'notice') {
+        const noticeType = String(obj.notice_type || '');
+        const subType = String(obj.sub_type || '');
+        const isPoke = (noticeType === 'notify' && subType === 'poke')
+            || noticeType === 'poke' || subType === 'poke';
+        if (!isPoke) return;
+        const gid = obj.group_id != null ? String(obj.group_id) : '';
+        if (!gid) return;                       // 私聊拍一拍不处理
+        if (ignoreFilter.has(gid)) return;
+        if (groupFilter.size && !groupFilter.has(gid)) return;
+        const userId = String(obj.user_id != null ? obj.user_id
+            : (obj.sender_id != null ? obj.sender_id : ''));
+        const targetId = String(obj.target_id != null ? obj.target_id : '');
+        emitEvent({
+            event: 'poke',
+            groupId: gid,
+            groupName: sanitizeText(groupName(gid)),
+            userId,
+            targetId,
+            isTargetMe: !!(selfId && targetId === selfId),
+            isFromMe: !!(selfId && userId === selfId),
+        });
+        return;
+    }
     if (obj.post_type !== 'message') return;
     const type = obj.message_type === 'private' ? 'private' : 'group';
     if (type !== 'group') return;
@@ -306,6 +332,7 @@ function handleObj(obj) {
         content,
         mentioned,
         atAll,
+        messageId: obj.message_id != null ? String(obj.message_id) : '',
         raw: sanitizeText(obj.raw_message || '')
     });
 }
@@ -416,10 +443,34 @@ function handleCommand(cmd) {
     switch (cmd.type) {
         case 'sendGroup': {
             const gid = String(cmd.groupId == null ? '' : cmd.groupId).trim();
-            let text = String(cmd.text || '');
+            const text = String(cmd.text || '');
             if (!gid || !text) return;
-            if (cmd.atSender) text = '[CQ:at,qq=' + String(cmd.atSender) + '] ' + text;
-            sendAction('send_group_msg', { group_id: gid, message: text });
+            const replyTo = String(cmd.replyTo == null ? '' : cmd.replyTo).trim();
+            if (replyTo) {
+                // 引用回复：message_id 作为**消息段数组的第一位**，后面才是 @ 和正文。
+                const segs = [{ type: 'reply', data: { id: replyTo } }];
+                if (cmd.atSender) segs.push({ type: 'at', data: { qq: String(cmd.atSender) } });
+                segs.push({ type: 'text', data: { text } });
+                sendAction('send_group_msg', { group_id: gid, message: segs });
+                break;
+            }
+            let msg = text;
+            if (cmd.atSender) msg = '[CQ:at,qq=' + String(cmd.atSender) + '] ' + msg;
+            sendAction('send_group_msg', { group_id: gid, message: msg });
+            break;
+        }
+        case 'action': {
+            // 通用 OneBot 11 接口透传（拍一拍等）。
+            const name = String(cmd.action || '').trim();
+            if (!name) { log('warn', 'action 命令缺少 action 名'); return; }
+            actionAsync(name, cmd.params || {}, 8000).then((res) => {
+                const ok = res && (res.status === 'ok' ||
+                    (res.retcode != null && res.retcode === 0));
+                if (!ok) {
+                    log('warn', '调用 ' + name + ' 失败: ' +
+                        JSON.stringify((res && (res.message || res.wording)) || res));
+                }
+            });
             break;
         }
         case 'sendGroupMusic': {

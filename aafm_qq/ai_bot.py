@@ -14,17 +14,44 @@ import time
 from collections import deque
 from typing import Callable, Deque, Dict, List, Optional
 
-from . import llm
+from . import llm, websearch
 from .config import AiConfig
+
+# 粗估 token：CJK 约 1 token/字，其它字符约 4 字符/token（不需要精确，够用就行）
+_CJK_RE = re.compile(r'[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]')
+# 句子边界（保留分隔符）
+_SENT_RE = re.compile(r'(?<=[。！？!?；;…\n])')
+
+
+def estimate_tokens(text: str) -> int:
+    s = str(text or '')
+    if not s:
+        return 0
+    cjk = len(_CJK_RE.findall(s))
+    return cjk + (len(s) - cjk + 3) // 4
+
+
+def _trim_sentences(line: str, max_tokens: int) -> str:
+    """按句子把一行裁到 ``max_tokens`` 以内（尽量不切断语义）。"""
+    parts = [p for p in _SENT_RE.split(str(line or '')) if p]
+    out = ''
+    for p in parts:
+        if estimate_tokens(out + p) > max_tokens:
+            break
+        out += p
+    if out.strip():
+        return out.strip()
+    keep = max(8, int(max_tokens * 1.2))
+    return str(line or '')[:keep].rstrip() + '…'
 
 
 class AiBot:
     def __init__(self, config: AiConfig,
-                 send_group: Callable[[str, str, str], bool],
+                 send_group: Callable[[str, str, str, str], bool],
                  on_log: Callable[[str, str], None],
                  affinity: Optional[object] = None):
         self.config = config
-        self._send_group = send_group   # (groupId, text, atSender) -> bool
+        self._send_group = send_group   # (groupId, text, atSender, replyTo) -> bool
         self._log = on_log              # (level, message)
         # Optional 好感度 store (aafm_qq.affinity.Affinity): used to colour the
         # persona prompt and to reward members who chat with the bot.
@@ -61,12 +88,71 @@ class AiBot:
 
     # ------------------------------------------------------------------
     def _context(self, group_id: str) -> Deque[str]:
+        want = max(0, int(self.config.contextLength or 0))
         with self._lock:
             buf = self._contexts.get(group_id)
-            if buf is None:
-                buf = deque(maxlen=max(0, int(self.config.contextLength or 20)))
+            if buf is None or buf.maxlen != want:
+                buf = deque(buf or (), maxlen=want)
                 self._contexts[group_id] = buf
             return buf
+
+    # ------------------------------------------------------------------
+    # 上下文：按 token 预算取「触发消息之前的一段历史」
+    # ------------------------------------------------------------------
+    def _build_history(self, group_id: str, budget: int) -> str:
+        """从最近往回取，直到用完 ``budget``；太长的那一行按句子裁。"""
+        lines = list(self._context(group_id))
+        if not lines:
+            return ''
+        if budget <= 0:
+            return '\n'.join(lines)
+        picked: List[str] = []
+        used = 0
+        for line in reversed(lines):
+            cost = estimate_tokens(line) + 1      # +1：换行/分隔
+            if used + cost <= budget:
+                picked.append(line)
+                used += cost
+                continue
+            room = budget - used
+            if room >= 12:
+                trimmed = _trim_sentences(line, room)
+                if trimmed:
+                    picked.append(trimmed)
+            break
+        picked.reverse()
+        return '\n'.join(picked)
+
+    def _search_query(self, content: str) -> str:
+        """把消息变成搜索词：去掉开头的触发词 / @，压成一跑，限长。"""
+        text = (content or '').strip()
+        for tok in self._trigger_literals():
+            if tok and text.lower().startswith(tok.lower()):
+                text = text[len(tok):].lstrip()
+                break
+        text = re.sub(r'^(@\S+\s*)+', '', text).strip()
+        text = re.sub(r'\s+', ' ', text)
+        return text[:80]
+
+    def _maybe_search(self, content: str) -> str:
+        """按配置决定要不要联网搜。返回给模型看的文本（''=没搜/没结果）。"""
+        cfg = self.config
+        if not cfg.searchEnabled:
+            return ''
+        query = self._search_query(content)
+        if not query:
+            return ''
+        if (cfg.searchMode or 'keywords').lower() != 'always':
+            kws = [k.strip() for k in re.split(r'[,，]', cfg.searchKeywords or '') if k.strip()]
+            low = content.lower()
+            if not any(k.lower() in low for k in kws):
+                return ''
+        items, err = websearch.search_ex(query, cfg)
+        if not items:
+            self._log('warn', f'[联网搜索] 「{query}」没搜到：{err}')
+            return ''
+        self._log('info', f'[联网搜索] 「{query}」→ {len(items)} 条结果')
+        return websearch.format_results(items)
 
     def _trigger_literals(self) -> List[str]:
         """The user-configured trigger word(s) as literal strings.
@@ -161,9 +247,12 @@ class AiBot:
         if not reply:
             return
         sent = 0
-        for line in self._split_reply(reply):
+        # 只引用第一条：把触发消息的 id 作为消息段第一位（不用 LLM 参与）。
+        quote = str(ev.get('messageId') or '') if self.config.quoteReply else ''
+        for idx, line in enumerate(self._split_reply(reply)):
             at = sender_id if self.config.atReply else ''
-            if self._send_group(group_id, line, at):
+            reply_to = quote if idx == 0 else ''
+            if self._send_group(group_id, line, at, reply_to):
                 self._context(group_id).append(f'我: {line}')
                 sent += 1
             time.sleep(0.6)
@@ -181,12 +270,19 @@ class AiBot:
             self._log('error', 'LLM 初始化失败: ' + str(e))
             return ''
         try:
-            recent = list(self._context(group_id)) if cfg.contextEnabled else []
-            recent = recent[-max(1, int(cfg.contextLength or 20)):]
-            lines = '\n'.join(recent) if recent else f'{sender}: {content}'
-            user = (f'以下是 QQ 群最近的聊天记录：\n{lines}\n\n'
-                    f'请以群友身份接一句话回复（口语、简短，最多 '
-                    f'{int(cfg.maxReplyMessages)} 句）。')
+            if cfg.contextEnabled:
+                history = self._build_history(group_id,
+                                              int(cfg.contextTokenBudget or 0))
+            else:
+                history = ''
+            lines = history or f'{sender}: {content}'
+            user = f'以下是 QQ 群最近的聊天记录：\n{lines}\n\n'
+            searched = self._maybe_search(content)
+            if searched:
+                user += ('我刚查到的联网搜索结果（可能过时，仅供参考；'
+                         '能用就用，别编造）：\n' + searched + '\n\n')
+            user += (f'请以群友身份接一句话回复（口语、简短，最多 '
+                     f'{int(cfg.maxReplyMessages)} 句）。')
             system_prompt = cfg.systemPrompt
             if self._affinity is not None:
                 hint = self._affinity.hint(group_id, sender_id, sender)

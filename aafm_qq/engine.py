@@ -95,9 +95,21 @@ class QqEngine:
         except Exception:  # noqa: BLE001
             return False
 
-    def send_group(self, group_id: str, text: str, at_sender: str = '') -> bool:
+    def send_group(self, group_id: str, text: str, at_sender: str = '',
+                   reply_to: str = '') -> bool:
         return self.send({'type': 'sendGroup', 'groupId': str(group_id),
-                          'text': text, 'atSender': str(at_sender or '')})
+                          'text': text, 'atSender': str(at_sender or ''),
+                          'replyTo': str(reply_to or '')})
+
+    def send_action(self, action: str, params: Optional[Dict[str, Any]] = None) -> bool:
+        """Run any OneBot 11 action through the engine (e.g. ``send_poke``)."""
+        return self.send({'type': 'action', 'action': str(action or ''),
+                          'params': dict(params or {})})
+
+    def send_poke(self, group_id: str, user_id: str) -> bool:
+        """拍一拍群成员（OneBot 11 ``send_poke``）。"""
+        return self.send_action('send_poke', {'group_id': str(group_id),
+                                              'user_id': str(user_id)})
 
     def send_group_music(self, group_id: str, platform: str = '163', songId: str = '',
                          title: str = '', artist: str = '', audio: str = '',

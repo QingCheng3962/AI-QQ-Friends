@@ -8,6 +8,7 @@ Persisted to ``config.json`` next to the program (gitignored). Two parts:
                 each has its own launcher path, port and token.
 - ``song``    : 点歌 (song request) — search a song and post a music card.
 - ``affinity``: 好感度 (favour) — a per-member score that colours the persona.
+- ``poke``    : 拍一拍 (poke) — poke back / poke close members (no LLM involved).
 - ``misc``    : 杂项 — 视频推荐 (Bilibili video recommendations).
 """
 from __future__ import annotations
@@ -41,6 +42,26 @@ DEFAULT_SYSTEM_PROMPT = (
 # A message triggers only when it STARTS WITH it: "[AI]你好" triggers,
 # "你好[AI]" does not. Comma-separated words are all accepted.
 DEFAULT_TRIGGER_WORD = '[AI]'
+
+# 「联网搜索」自动触发用的关键词（消息里含任意一个才去搜，省钱）。
+DEFAULT_SEARCH_KEYWORDS = (
+    '天气,气温,下雨,下雪,新闻,最新,今天,现在,刚刚,最近,股价,汇率,比分,赛果,'
+    '票房,上映,票价,航班,高铁,官网,多少钱,几点,几号,日期,今年,去年,明年,'
+    '2025,2026,实时,最新消息,发生了什么,怎么回事'
+)
+
+# 搜索来源（GUI 下拉框按这个顺序 + `_SEARCH_PROVIDER_KEYS` 对应）
+SEARCH_PROVIDERS = {
+    'duckduckgo': 'DuckDuckGo（免费，无需 Key）',
+    'bing': 'Bing（免费，无需 Key）',
+    'custom': '自定义 JSON 接口（Tavily / SearXNG…）',
+}
+
+# 什么时候搜
+SEARCH_MODES = {
+    'keywords': '只在关键词命中时搜（省钱）',
+    'always': '每次回复都搜（最准、最慢）',
+}
 
 # Words/phrases that must never appear in the bot's outgoing message.
 DEFAULT_BLOCKED_WORDS = [
@@ -108,6 +129,7 @@ class AiConfig:
     autoReply: bool = False                   # reply to every group message
     autoReplyChance: int = 100                # 0-100 (used with autoReply)
     atReply: bool = True                      # prefix the reply with @sender
+    quoteReply: bool = True                   # 引用触发它的那条消息（[CQ:reply]）
 
     # Output filter: the bot must never echo the trigger (prevents group members
     # from injecting prompts) and must not say rude words / leak "纯净输出".
@@ -116,10 +138,21 @@ class AiConfig:
 
     # Context / limits
     contextEnabled: bool = True
-    contextLength: int = 20
+    contextLength: int = 40                   # 最多保留多少条（硬上限）
+    contextTokenBudget: int = 1200            # 送进模型的 token 预算（0=只按条数）
     maxReplyMessages: int = 2
     maxCharsPerMessage: int = 120
     cooldownSeconds: int = 5
+
+    # 联网搜索（免费源 / 自定义源）。只有真要回复时才搜，且默认只在关键词命中时搜。
+    searchEnabled: bool = False
+    searchProvider: str = 'duckduckgo'
+    searchMode: str = 'keywords'              # keywords / always
+    searchKeywords: str = DEFAULT_SEARCH_KEYWORDS
+    searchMaxResults: int = 5
+    searchApiUrl: str = ''                    # custom：GET 模板带 {query}，否则 POST JSON
+    searchApiKey: str = ''
+    searchTimeoutSeconds: int = 12
 
     # Blacklist: [{"id": "123456", "name": "昵称"}] (by QQ id)
     blacklist: List[Dict[str, str]] = field(default_factory=list)
@@ -144,6 +177,7 @@ class AiConfig:
         self.triggerEnabled = bool(self.triggerEnabled)
         self.autoReply = bool(self.autoReply)
         self.atReply = bool(self.atReply)
+        self.quoteReply = bool(self.quoteReply)
         self.stripTrigger = bool(self.stripTrigger)
         if self.blockedWords is None:
             self.blockedWords = list(DEFAULT_BLOCKED_WORDS)
@@ -155,9 +189,21 @@ class AiConfig:
         self.blockedWords = norm_bw
         self.autoReplyChance = _clamp_int(self.autoReplyChance, 0, 100)
         self.contextLength = _clamp_int(self.contextLength, 0, 200)
+        self.contextTokenBudget = _clamp_int(self.contextTokenBudget, 0, 32000)
         self.maxReplyMessages = _clamp_int(self.maxReplyMessages, 1, 20)
         self.maxCharsPerMessage = _clamp_int(self.maxCharsPerMessage, 1, 2000)
         self.cooldownSeconds = _clamp_int(self.cooldownSeconds, 0, 3600)
+        self.searchEnabled = bool(self.searchEnabled)
+        if self.searchProvider not in SEARCH_PROVIDERS:
+            self.searchProvider = 'duckduckgo'
+        if self.searchMode not in SEARCH_MODES:
+            self.searchMode = 'keywords'
+        self.searchKeywords = (str(self.searchKeywords or '').strip()
+                               or DEFAULT_SEARCH_KEYWORDS)
+        self.searchMaxResults = _clamp_int(self.searchMaxResults, 1, 10)
+        self.searchApiUrl = str(self.searchApiUrl or '').strip()
+        self.searchApiKey = str(self.searchApiKey or '').strip()
+        self.searchTimeoutSeconds = _clamp_int(self.searchTimeoutSeconds, 3, 60)
         if self.blacklist is None:
             self.blacklist = []
         norm = []
@@ -230,6 +276,36 @@ class AffinityConfig:
         self.checkinEnabled = bool(self.checkinEnabled)
         self.checkinTrigger = str(self.checkinTrigger or '').strip() or '[签到]'
         self.checkinGain = _clamp_int(self.checkinGain, 0, 100)
+
+
+@dataclass
+class PokeConfig:
+    """拍一拍：调 OneBot 的 ``send_poke``（**绝不让 LLM 决定**）。
+
+    两条路径，都带冷却与概率：
+
+    - **被拍回拍**：有人拍了拍机器人 → 拍回去（``pokeBack``）。
+    - **主动拍**：好感度 ≥ ``affinityThreshold`` 的群友说话时，小概率拍一下
+      （``proactive``）。人越熟越容易触发，但不会刷屏。
+
+    QQ 对拍一拍有风控，冷却默认给到 120 秒，别调太小。
+    """
+    enabled: bool = True
+    pokeBack: bool = True               # 被拍了就拍回去
+    pokeBackChance: int = 100           # 回拍概率 %
+    proactive: bool = True              # 好感度高的群友说话时主动拍
+    affinityThreshold: int = 60         # 好感度 >= 这个值才会被主动拍
+    proactiveChance: int = 15           # 每次他说话时主动拍的概率 %
+    cooldownSeconds: int = 120          # 同一群两次拍的最小间隔（风控）
+
+    def validate(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.pokeBack = bool(self.pokeBack)
+        self.pokeBackChance = _clamp_int(self.pokeBackChance, 0, 100)
+        self.proactive = bool(self.proactive)
+        self.affinityThreshold = _clamp_int(self.affinityThreshold, 0, 1000)
+        self.proactiveChance = _clamp_int(self.proactiveChance, 0, 100)
+        self.cooldownSeconds = _clamp_int(self.cooldownSeconds, 0, 3600)
 
 
 # Titles shown when a member checks their 好感度 (high → low).
@@ -317,6 +393,7 @@ _NESTED_CONFIGS = {
     'ai': AiConfig,
     'song': SongConfig,
     'affinity': AffinityConfig,
+    'poke': PokeConfig,
     'misc': MiscConfig,
 }
 
@@ -335,6 +412,7 @@ class AppConfig:
     ai: AiConfig = field(default_factory=AiConfig)
     song: SongConfig = field(default_factory=SongConfig)
     affinity: AffinityConfig = field(default_factory=AffinityConfig)
+    poke: PokeConfig = field(default_factory=PokeConfig)
     misc: MiscConfig = field(default_factory=MiscConfig)
 
     def active(self) -> OneBotConfig:

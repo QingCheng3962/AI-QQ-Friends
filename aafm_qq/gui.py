@@ -39,6 +39,12 @@ class App:
     _VIDEO_SOURCE_LABELS = ['番剧追番榜（追番）', 'B 站首页推荐（主页）', 'B 站首页热门',
                             'B 站全站排行', '我的收藏夹（要登录 B 站）']
     _VIDEO_SOURCE_KEYS = ['anime', 'home', 'hot', 'rank', 'fav']
+    # 联网搜索来源 / 时机：顺序必须和 config.SEARCH_PROVIDERS / SEARCH_MODES 一致
+    _SEARCH_PROVIDER_LABELS = ['DuckDuckGo（免费，无需 Key）', 'Bing（免费，无需 Key）',
+                               '自定义 JSON 接口（Tavily / SearXNG…）']
+    _SEARCH_PROVIDER_KEYS = ['duckduckgo', 'bing', 'custom']
+    _SEARCH_MODE_LABELS = ['只在关键词命中时搜（省钱）', '每次回复都搜（最准、最慢）']
+    _SEARCH_MODE_KEYS = ['keywords', 'always']
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -178,6 +184,7 @@ class App:
         self.var_auto = tk.BooleanVar(value=False)
         self.var_chance = tk.StringVar()
         self.var_at = tk.BooleanVar(value=True)
+        self.var_quote = tk.BooleanVar(value=True)
         ttk.Checkbutton(rule, text='被 @ 时回复', variable=self.var_mention).grid(
             row=0, column=0, sticky='w', padx=4, pady=2)
         ttk.Checkbutton(rule, text='触发词回复', variable=self.var_trig_enabled).grid(
@@ -193,22 +200,68 @@ class App:
         ttk.Label(r, text='每条都回复概率 %').pack(side='left')
         ttk.Entry(r, textvariable=self.var_chance, width=6).pack(side='left', padx=(4, 12))
         ttk.Checkbutton(r, text='回复时 @ 对方', variable=self.var_at).pack(side='left')
+        ttk.Checkbutton(r, text='引用触发消息（针对性回复）',
+                        variable=self.var_quote).pack(side='left', padx=(12, 0))
         rule.columnconfigure(1, weight=1)
 
         ctx = ttk.LabelFrame(sc.inner, text='上下文与限制', padding=8)
         ctx.pack(fill='x', pady=(8, 0))
         self.var_ctx_enabled = tk.BooleanVar(value=True)
         self.var_ctx_len = tk.StringVar()
+        self.var_ctx_budget = tk.StringVar()
         self.var_max_msgs = tk.StringVar()
         self.var_max_chars = tk.StringVar()
         self.var_cooldown = tk.StringVar()
         ttk.Checkbutton(ctx, text='启用上下文', variable=self.var_ctx_enabled).grid(
             row=0, column=0, sticky='w', padx=4, pady=2)
         self._row(ctx, 0, '上下文长度', self.var_ctx_len, col=2, width=6)
-        self._row(ctx, 1, '最大回复条数', self.var_max_msgs, width=6)
-        self._row(ctx, 2, '单条最大字数', self.var_max_chars, width=6)
-        self._row(ctx, 3, '冷却秒', self.var_cooldown, width=6)
+        self._row(ctx, 1, '上下文 Token 预算', self.var_ctx_budget, width=8,
+                  hint='0 = 只按条数；超预算时从最早的一句开始、按句子裁剪')
+        self._row(ctx, 2, '最大回复条数', self.var_max_msgs, width=6)
+        self._row(ctx, 3, '单条最大字数', self.var_max_chars, width=6)
+        self._row(ctx, 4, '冷却秒', self.var_cooldown, width=6)
         ctx.columnconfigure(1, weight=1)
+
+        srch = ttk.LabelFrame(
+            sc.inner, text='联网搜索（免费源 / 自定义源；只有真要回复、且命中时才搜）',
+            padding=8)
+        srch.pack(fill='x', pady=(8, 0))
+        self.var_search_enabled = tk.BooleanVar(value=False)
+        self.var_search_provider = tk.StringVar(value=self._SEARCH_PROVIDER_LABELS[0])
+        self.var_search_mode = tk.StringVar(value=self._SEARCH_MODE_LABELS[0])
+        self.var_search_kw = tk.StringVar()
+        self.var_search_max = tk.StringVar(value='5')
+        self.var_search_timeout = tk.StringVar(value='12')
+        self.var_search_url = tk.StringVar()
+        self.var_search_key = tk.StringVar()
+        ttk.Checkbutton(srch, text='启用联网搜索', variable=self.var_search_enabled).grid(
+            row=0, column=0, columnspan=2, sticky='w', padx=4, pady=2)
+        ttk.Label(srch, text='搜索来源').grid(row=1, column=0, sticky='w', padx=4, pady=2)
+        ttk.Combobox(srch, textvariable=self.var_search_provider, state='readonly',
+                     values=self._SEARCH_PROVIDER_LABELS, width=34).grid(
+            row=1, column=1, sticky='w', padx=4, pady=2)
+        ttk.Label(srch, text='什么时候搜').grid(row=2, column=0, sticky='w', padx=4, pady=2)
+        ttk.Combobox(srch, textvariable=self.var_search_mode, state='readonly',
+                     values=self._SEARCH_MODE_LABELS, width=30).grid(
+            row=2, column=1, sticky='w', padx=4, pady=2)
+        r = ttk.Frame(srch)
+        r.grid(row=3, column=0, columnspan=4, sticky='w', pady=2)
+        ttk.Label(r, text='结果条数').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_search_max, width=6).pack(side='left', padx=(4, 16))
+        ttk.Label(r, text='超时秒').pack(side='left')
+        ttk.Entry(r, textvariable=self.var_search_timeout, width=6).pack(side='left', padx=4)
+        self._row(srch, 4, '自动搜索关键词', self.var_search_kw, width=52,
+                  hint='逗号分隔；消息里含任意一个才去搜（模式选「每次」则忽略）')
+        self._row(srch, 5, '自定义接口地址', self.var_search_url, width=52,
+                  hint='带 {query} 走 GET（SearXNG）；不带则 POST JSON（Tavily/Serper）')
+        self._row(srch, 6, '自定义接口 Key', self.var_search_key, width=52, show='*',
+                  hint='只有自定义接口需要，可留空')
+        ttk.Label(srch, foreground='#888888', wraplength=760, justify='left',
+                  text='搜索只在机器人**本来就要回复**时触发，搜到的结果会作为参考塞进提示词。'
+                       'DuckDuckGo / Bing 都是免费网页抓取，可能被限流；要稳定可填一个自定义 JSON 接口'
+                       '（SearXNG：http://127.0.0.1:8080/search?q={query}&format=json）。').grid(
+            row=7, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 0))
+        srch.columnconfigure(1, weight=1)
 
         bl = ttk.LabelFrame(sc.inner, text='黑名单（每行一个 QQ 号）', padding=8)
         bl.pack(fill='x', pady=(8, 4))
@@ -228,6 +281,9 @@ class App:
     def _build_interact_tab(self):
         host = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(host, text=' 互动 ')
+        sc = ScrollFrame(host)
+        sc.pack(fill='both', expand=True)
+        host = sc.inner
 
         sd = ttk.LabelFrame(host, text='点歌（群内发「触发词 + 歌名」即发音乐卡片）', padding=8)
         sd.pack(fill='x', pady=(6, 0))
@@ -335,6 +391,43 @@ class App:
         ttk.Entry(r3, textvariable=self.var_aff_checkin_gain, width=6).pack(side='left', padx=4)
         ttk.Label(r3, text='（每天一次，不受每日上限限制）', foreground='#888888').pack(
             side='left', padx=(4, 0))
+
+        # --- 拍一拍（调 send_poke；完全不让大模型决定）---
+        pk = ttk.LabelFrame(host, text='拍一拍（调 OneBot send_poke；不让大模型决定）', padding=8)
+        pk.pack(fill='x', pady=(8, 4))
+        self.var_poke_enabled = tk.BooleanVar(value=True)
+        self.var_poke_back = tk.BooleanVar(value=True)
+        self.var_poke_back_chance = tk.StringVar(value='100')
+        self.var_poke_proactive = tk.BooleanVar(value=True)
+        self.var_poke_threshold = tk.StringVar(value='60')
+        self.var_poke_chance = tk.StringVar(value='15')
+        self.var_poke_cooldown = tk.StringVar(value='120')
+        ttk.Checkbutton(pk, text='启用拍一拍', variable=self.var_poke_enabled).pack(
+            anchor='w', padx=4, pady=2)
+        rp = ttk.Frame(pk)
+        rp.pack(fill='x', pady=2)
+        ttk.Checkbutton(rp, text='被拍了就拍回去', variable=self.var_poke_back).pack(
+            side='left', padx=(4, 8))
+        ttk.Label(rp, text='回拍概率 %').pack(side='left')
+        ttk.Entry(rp, textvariable=self.var_poke_back_chance, width=6).pack(
+            side='left', padx=(4, 16))
+        ttk.Label(rp, text='同群冷却秒').pack(side='left')
+        ttk.Entry(rp, textvariable=self.var_poke_cooldown, width=7).pack(side='left', padx=4)
+        rq = ttk.Frame(pk)
+        rq.pack(fill='x', pady=(4, 0))
+        ttk.Checkbutton(rq, text='好感度高的群友说话时主动拍', variable=self.var_poke_proactive).pack(
+            side='left', padx=(4, 8))
+        ttk.Label(rq, text='好感度 ≥').pack(side='left')
+        ttk.Entry(rq, textvariable=self.var_poke_threshold, width=6).pack(
+            side='left', padx=(4, 12))
+        ttk.Label(rq, text='每次说话有').pack(side='left')
+        ttk.Entry(rq, textvariable=self.var_poke_chance, width=6).pack(
+            side='left', padx=(4, 4))
+        ttk.Label(rq, text='% 概率拍一下').pack(side='left')
+        ttk.Label(pk, foreground='#888888', wraplength=760, justify='left',
+                  text='拍一拍有风控：冷却别调太小（默认 120 秒），概率别拉满；'
+                       '真的被限了就先把「主动拍」关掉，只留「被拍回拍」。').pack(
+            anchor='w', padx=4, pady=(4, 0))
 
     def _build_misc_tab(self):
         host = ttk.Frame(self.notebook, padding=8)
@@ -502,11 +595,25 @@ class App:
         self.var_auto.set(bool(ai.autoReply))
         self.var_chance.set(str(ai.autoReplyChance))
         self.var_at.set(bool(ai.atReply))
+        self.var_quote.set(bool(ai.quoteReply))
         self.var_ctx_enabled.set(bool(ai.contextEnabled))
         self.var_ctx_len.set(str(ai.contextLength))
+        self.var_ctx_budget.set(str(ai.contextTokenBudget))
         self.var_max_msgs.set(str(ai.maxReplyMessages))
         self.var_max_chars.set(str(ai.maxCharsPerMessage))
         self.var_cooldown.set(str(ai.cooldownSeconds))
+        self.var_search_enabled.set(bool(ai.searchEnabled))
+        self.var_search_provider.set(
+            dict(zip(self._SEARCH_PROVIDER_KEYS, self._SEARCH_PROVIDER_LABELS)).get(
+                ai.searchProvider, self._SEARCH_PROVIDER_LABELS[0]))
+        self.var_search_mode.set(
+            dict(zip(self._SEARCH_MODE_KEYS, self._SEARCH_MODE_LABELS)).get(
+                ai.searchMode, self._SEARCH_MODE_LABELS[0]))
+        self.var_search_kw.set(ai.searchKeywords or '')
+        self.var_search_max.set(str(ai.searchMaxResults))
+        self.var_search_timeout.set(str(ai.searchTimeoutSeconds))
+        self.var_search_url.set(ai.searchApiUrl or '')
+        self.var_search_key.set(ai.searchApiKey or '')
         self.blacklist.delete('1.0', 'end')
         self.blacklist.insert('1.0', '\n'.join(b.get('id', '') for b in ai.blacklist))
         self.var_strip.set(bool(ai.stripTrigger))
@@ -537,6 +644,15 @@ class App:
         self.var_aff_checkin.set(bool(aff.checkinEnabled))
         self.var_aff_checkin_trigger.set(aff.checkinTrigger or '')
         self.var_aff_checkin_gain.set(str(aff.checkinGain))
+
+        pk = cfg.poke
+        self.var_poke_enabled.set(bool(pk.enabled))
+        self.var_poke_back.set(bool(pk.pokeBack))
+        self.var_poke_back_chance.set(str(pk.pokeBackChance))
+        self.var_poke_proactive.set(bool(pk.proactive))
+        self.var_poke_threshold.set(str(pk.affinityThreshold))
+        self.var_poke_chance.set(str(pk.proactiveChance))
+        self.var_poke_cooldown.set(str(pk.cooldownSeconds))
 
         misc = cfg.misc
         self.var_misc_video_enabled.set(bool(misc.videoEnabled))
@@ -585,11 +701,25 @@ class App:
         ai.autoReply = self.var_auto.get()
         ai.autoReplyChance = self._int(self.var_chance.get(), 100)
         ai.atReply = self.var_at.get()
+        ai.quoteReply = self.var_quote.get()
         ai.contextEnabled = self.var_ctx_enabled.get()
-        ai.contextLength = self._int(self.var_ctx_len.get(), 20)
+        ai.contextLength = self._int(self.var_ctx_len.get(), 40)
+        ai.contextTokenBudget = self._int(self.var_ctx_budget.get(), 1200)
         ai.maxReplyMessages = self._int(self.var_max_msgs.get(), 2)
         ai.maxCharsPerMessage = self._int(self.var_max_chars.get(), 120)
         ai.cooldownSeconds = self._int(self.var_cooldown.get(), 5)
+        ai.searchEnabled = self.var_search_enabled.get()
+        ai.searchProvider = dict(zip(
+            self._SEARCH_PROVIDER_LABELS, self._SEARCH_PROVIDER_KEYS)).get(
+            self.var_search_provider.get().strip(), ai.searchProvider or 'duckduckgo')
+        ai.searchMode = dict(zip(
+            self._SEARCH_MODE_LABELS, self._SEARCH_MODE_KEYS)).get(
+            self.var_search_mode.get().strip(), ai.searchMode or 'keywords')
+        ai.searchKeywords = self.var_search_kw.get().strip()
+        ai.searchMaxResults = self._int(self.var_search_max.get(), 5)
+        ai.searchTimeoutSeconds = self._int(self.var_search_timeout.get(), 12)
+        ai.searchApiUrl = self.var_search_url.get().strip()
+        ai.searchApiKey = self.var_search_key.get().strip()
         ids = [ln.strip() for ln in self.blacklist.get('1.0', 'end').splitlines() if ln.strip()]
         ai.blacklist = [{'id': i, 'name': ''} for i in ids]
         ai.stripTrigger = self.var_strip.get()
@@ -616,6 +746,15 @@ class App:
         aff.checkinEnabled = self.var_aff_checkin.get()
         aff.checkinTrigger = self.var_aff_checkin_trigger.get().strip()
         aff.checkinGain = self._int(self.var_aff_checkin_gain.get(), 5)
+
+        pk = cfg.poke
+        pk.enabled = self.var_poke_enabled.get()
+        pk.pokeBack = self.var_poke_back.get()
+        pk.pokeBackChance = self._int(self.var_poke_back_chance.get(), 100)
+        pk.proactive = self.var_poke_proactive.get()
+        pk.affinityThreshold = self._int(self.var_poke_threshold.get(), 60)
+        pk.proactiveChance = self._int(self.var_poke_chance.get(), 15)
+        pk.cooldownSeconds = self._int(self.var_poke_cooldown.get(), 120)
 
         misc = cfg.misc
         misc.videoEnabled = self.var_misc_video_enabled.get()

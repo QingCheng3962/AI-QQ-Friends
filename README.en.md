@@ -23,14 +23,16 @@ Plug a large language model into a QQ group and let it become a **group member t
 - **AI group member**
   - Freely written persona / system prompt.
   - Reply rules: **trigger-word replies** (the trigger word is **a plain string you type**, default `[AI]`; a message must **start with** it — `[AI]hello` triggers, `hello[AI]` does not; comma-separated words all count), an optional **reply when @-mentioned**, an optional **reply to everything (by probability)**, plus an optional **advanced trigger regex**.
-  - **Context memory** (remembers the last N messages per group), **@-mention the sender** on reply, **cooldown**, **blacklist**.
+  - **Context memory** (remembers the last N messages per group) with a **token budget** (fills newest-first, trims at sentence boundaries when over budget), **@-mention the sender** on reply, **quote the trigger message** (a `reply` segment as the first element of the message array, no LLM involved), **cooldown**, **blacklist**.
   - Max characters per message and max number of reply messages.
+  - **Web search** (optional): free **DuckDuckGo / Bing**, or a **custom JSON API** (SearXNG / Tavily / Serper). By default it only searches when keywords match (weather, news, stock…) and the bot is actually replying, then injects the results as reference so it does not make things up.
   - **Output filtering**: if a reply **contains your trigger word** (e.g. `[AI]`) it is stripped out — preventing prompt injection by group members and self-triggering; a reply that hits a **blocked word** (defaults include “纯净输出” plus common profanity) is **dropped entirely**. Trigger words, blocked words and toggles live under “AI Config → Reply Rules / Output Filter”.
 - **In-group interactions**
   - **Song request**: a member sends “trigger word + song name” (default `[点歌] 起风了`) and the bot searches and posts a **music card**. The order is QQ Music → NetEase Cloud; if neither works it falls back to a directly playable alternate source (a `custom` card). A message consumed by a song request is **not** handed to the chat AI.
   - **Affinity**: every member has a 0–100 score with the bot that **grows when they chat with it** (with a daily cap). It is written into the persona prompt so the tone feels more natural (the closer, the warmer); members can send the “query trigger” (default `[好感度]`) to see their score and title. Optionally persisted to `affinity.json`.
   - **Daily check-in**: a member sends the check-in trigger (default `[签到]`) once a day for bonus affinity (default +5, **not limited by the daily cap**), and a consecutive-day count is kept.
   - **Video recommendations**: a member sends “trigger + 视频推荐” (default `[视频推荐]`) to post a batch of Bilibili videos. Five sources: anime ranking (default) / Bilibili home feed / home popular / site ranking / my favorites (needs login). The cooldown is **shared across all users**, and asking again after it expires fetches a **fresh batch**.
+  - **Poke**: OneBot 11 `send_poke`, **never decided by the LLM** — “poke back when poked” plus “occasionally poke members whose affinity is high”, with a per-group cooldown (default 120 s) to stay clear of QQ risk control.
 - **In-app conversation**: the Log tab shows connection status, group messages and AI replies in real time (all in one unified format and written to `logs/` when you close the app), and can **send test messages manually**.
 
 ## Requirements

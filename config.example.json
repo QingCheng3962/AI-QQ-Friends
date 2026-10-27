@@ -41,13 +41,23 @@
     "autoReply": false,
     "autoReplyChance": 100,
     "atReply": true,
+    "quoteReply": true,
     "stripTrigger": true,
     "blockedWords": ["纯净输出", "傻逼", "尼玛", "妈的", "草泥马", "fuck", "shit"],
     "contextEnabled": true,
-    "contextLength": 20,
+    "contextLength": 40,
+    "contextTokenBudget": 1200,
     "maxReplyMessages": 2,
     "maxCharsPerMessage": 120,
     "cooldownSeconds": 5,
+    "searchEnabled": false,
+    "searchProvider": "duckduckgo",
+    "searchMode": "keywords",
+    "searchKeywords": "天气,气温,新闻,最新,今天,现在,刚刚,股价,汇率,比分,票房,上映,票价,航班,官网,多少钱,几点,2025,2026",
+    "searchMaxResults": 5,
+    "searchApiUrl": "",
+    "searchApiKey": "",
+    "searchTimeoutSeconds": 12,
     "blacklist": []
   },
   "song": {
@@ -70,6 +80,15 @@
     "checkinEnabled": true,
     "checkinTrigger": "[签到]",
     "checkinGain": 5
+  },
+  "poke": {
+    "enabled": true,
+    "pokeBack": true,
+    "pokeBackChance": 100,
+    "proactive": true,
+    "affinityThreshold": 60,
+    "proactiveChance": 15,
+    "cooldownSeconds": 120
   },
   "misc": {
     "videoEnabled": true,

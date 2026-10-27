@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import queue
+import random
 import re
 import socket
 import subprocess
@@ -50,6 +51,9 @@ class Controller:
         self._snowluma_detect_at = 0.0
         self._snowluma_detected_marker = ''
         self._snowluma_uin = ''
+        # 拍一拍：同一群两次之间的冷却（风控）
+        self._last_poke_at: Dict[str, float] = {}
+        self._poke_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Logging: every line shown in the GUI is also buffered for the .log file.
@@ -82,8 +86,9 @@ class Controller:
             pass
         return out
 
-    def _ai_send(self, group_id: str, text: str, at_sender: str = '') -> bool:
-        ok = self._engine.send_group(group_id, text, at_sender)
+    def _ai_send(self, group_id: str, text: str, at_sender: str = '',
+                 reply_to: str = '') -> bool:
+        ok = self._engine.send_group(group_id, text, at_sender, reply_to)
         if ok:
             self._emit(f'[{_now()}]Replay[{group_id}][bot] -> {text}',
                        'out', group_id, self._group_name(group_id))
@@ -380,6 +385,9 @@ class Controller:
         if etype == 'groupMessage':
             self._on_group_message(ev)
             return
+        if etype == 'poke':
+            self._on_poke(ev)
+            return
         # pong / unknown: nothing to do
 
     def _on_group_message(self, ev: Dict[str, Any]) -> None:
@@ -403,7 +411,80 @@ class Controller:
                 return
         except Exception as e:  # noqa: BLE001
             self._log('error', '互动功能出错: ' + str(e))
+        self._maybe_proactive_poke(ev)
         self.ai.feed(ev)
+
+    # ------------------------------------------------------------------
+    # 拍一拍（完全不经过大模型：被拍回拍 / 好感度高的群友说话时偶尔拍一下）
+    # ------------------------------------------------------------------
+    def _poke_cool_ok(self, group_id: str, now: float) -> bool:
+        cool = float(getattr(self.config.poke, 'cooldownSeconds', 0) or 0)
+        with self._poke_lock:
+            last = self._last_poke_at.get(group_id, 0.0)
+            if cool and last and now - last < cool:
+                return False
+            self._last_poke_at[group_id] = now
+            return True
+
+    def _do_poke(self, group_id: str, user_id: str, name: str, why: str) -> bool:
+        if not user_id:
+            return False
+        ok = self._engine.send_poke(group_id, user_id)
+        if ok:
+            who = name or user_id
+            self._emit(f'[{_now()}][系统] 拍了拍 {who}（{why}）', 'out',
+                       group_id, self._group_name(group_id))
+        return ok
+
+    def _on_poke(self, ev: Dict[str, Any]) -> None:
+        cfg = self.config.poke
+        if not cfg.enabled or not cfg.pokeBack:
+            return
+        if ev.get('isFromMe') or not ev.get('isTargetMe'):
+            return
+        group_id = str(ev.get('groupId') or '')
+        user_id = str(ev.get('userId') or '')
+        if not group_id or not user_id:
+            return
+        if random.randint(1, 100) > max(0, min(100, int(cfg.pokeBackChance or 0))):
+            return
+        if not self._poke_cool_ok(group_id, time.time()):
+            return
+        name = self._qq_nicknames.get(user_id, '')
+
+        def work() -> None:
+            time.sleep(random.uniform(0.6, 1.4))   # 别秒回，像真人手速
+            self._do_poke(group_id, user_id, name, '回拍')
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _maybe_proactive_poke(self, ev: Dict[str, Any]) -> None:
+        cfg = self.config.poke
+        if not cfg.enabled or not cfg.proactive:
+            return
+        group_id = str(ev.get('groupId') or '')
+        user_id = str(ev.get('senderId') or '')
+        if not group_id or not user_id:
+            return
+        if user_id == str(getattr(self.ai, 'self_id', '') or ''):
+            return
+        try:
+            score = self.interactions.affinity.score(group_id, user_id)
+        except Exception:  # noqa: BLE001
+            return
+        if score < int(cfg.affinityThreshold or 0):
+            return
+        if random.randint(1, 100) > max(0, min(100, int(cfg.proactiveChance or 0))):
+            return
+        if not self._poke_cool_ok(group_id, time.time()):
+            return
+        name = ev.get('sender') or ''
+
+        def work() -> None:
+            time.sleep(random.uniform(0.8, 2.0))
+            self._do_poke(group_id, user_id, name, f'好感度 {score}')
+
+        threading.Thread(target=work, daemon=True).start()
 
     def set_ai_enabled(self, enabled: bool) -> None:
         self.config.ai.enabled = bool(enabled)
@@ -415,6 +496,7 @@ class Controller:
         self.config.ai.validate()
         self.config.song.validate()
         self.config.affinity.validate()
+        self.config.poke.validate()
         self.config.misc.validate()
         self.ai.load(self.config.ai)
         self.interactions.load(self.config)

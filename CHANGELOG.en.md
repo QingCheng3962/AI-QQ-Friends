@@ -4,6 +4,35 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added · Quote replies (zero cost, feels human)
+
+- The AI now **quotes the message that triggered it**: the `message_id` is put in the **first element of the message array** (a `reply` segment) right before sending. **No LLM involvement**, no extra tokens — it turns "the bot suddenly blurts something" into a targeted reply.
+- Toggle: **AI Config → Reply Rules → quote the trigger message** (`ai.quoteReply`, on by default). Only the first message of a multi-part reply is quoted.
+- Engine: `groupMessage` now carries `messageId`; the `sendGroup` command accepts `replyTo`.
+
+### Improved · Context is now token-budgeted
+
+- No longer just "the last N lines": new `ai.contextTokenBudget` (default **1200**, `0` = count only). History is filled newest-first until the budget runs out; a line that does not fit is **trimmed at sentence boundaries** (Chinese ≈ 1 token/char).
+- The line cap default goes from 20 to 40 (still a hard cap); the buffer is rebuilt when the setting changes.
+
+### Added · Poke
+
+- Calls OneBot 11 `send_poke`, **never decided by the LLM**:
+  - **poke back** when poked (chance + per-group cooldown);
+  - **occasionally poke members whose affinity ≥ threshold** (default 60) when they speak (default 15%).
+- Per-group cooldown defaults to **120 s** (QQ risk control) with a random 0.6–2 s delay before poking.
+- Engine: generic `action` passthrough plus a `poke` event (handles both `notice_type=notify/sub_type=poke` and `notice_type=poke`).
+- New **Poke** box on the Interactions tab; that tab is now scrollable.
+
+### Added · Web search (free and custom sources)
+
+- New `aafm_qq/websearch.py`: **DuckDuckGo** and **Bing** (free HTML scraping, no key; DuckDuckGo falls back to Bing), plus a **custom JSON API** (Tavily / Serper / SearXNG).
+- New **Web search** box on the AI Config tab: enable, source, *keyword-triggered / every reply*, keywords, result count, timeout, custom URL and key.
+- Search runs only when the bot is **actually going to reply**; results are marked "may be stale, reference only" and injected into the prompt with an instruction not to make things up.
+- Custom API: a URL containing `{query}` is called with **GET** (SearXNG: `…/search?q={query}&format=json`); otherwise a JSON **POST** (`{"query": ...}`, optional `Authorization: Bearer <key>`).
+
 ## [0.1.2] - 2026-10-18
 
 ### Added · NetEase member login (song direct links)

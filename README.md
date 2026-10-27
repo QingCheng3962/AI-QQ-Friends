@@ -23,14 +23,16 @@
 - **AI 群友**
   - 人设提示词（system prompt）自由编写。
   - 回复规则：**触发词回复**（触发词是**你自己输入的字符串**，默认 `[AI]`；消息**以它开头**才回复——`[AI]你好` 会触发，`你好[AI]` 不会；逗号可分隔多个）、可选「被 @ 回复」、可选「每条都回复（按概率）」，另有一个可留空的**高级触发正则**。
-  - **上下文记忆**（记住群里最近若干条）、回复时 **@ 对方**、**冷却时间**、**黑名单**。
+  - **上下文记忆**（记住群里最近若干条，并带 **Token 预算**：从最近往回装，超了就按句子裁剪）、回复时 **@ 对方**、**引用触发消息**（消息段数组第一位放 `reply` 段，不用大模型参与）、**冷却时间**、**黑名单**。
   - 单条最大字数、最大回复条数限制。
+  - **联网搜索**（可选）：免费源 **DuckDuckGo / Bing**，或**自定义 JSON 接口**（SearXNG / Tavily / Serper）；默认只在关键词命中（天气、新闻、股价…）且真要回复时才搜，结果作为参考塞进提示词，避免乱编。
   - **输出过滤**：回复里若**包含你设置的触发词**（如 `[AI]`）就把它删掉——防止群友用提示词注入、让机器人自我触发；命中**违禁词**（默认含「纯净输出」及常见脏话）的回复**整条丢弃**。触发词与违禁词、开关均可在「AI 配置 → 回复规则 / 输出过滤」里改。
 - **群内互动**
   - **点歌**：群友发「触发词 + 歌名」（默认 `[点歌] 起风了`），机器人搜索并发送**音乐卡片**。顺序为 QQ 音乐 → 网易云。登录网易云会员后，VIP 歌也能解析出**完整可播放直链**（`custom` 卡片）；命中点歌的消息**不会再交给聊天 AI**。
   - **好感度**：每个群友与机器人有一份 0–100 的好感度，**被搭话就涨**（有每日上限），会写进人设提示词让语气更自然（越熟越亲近）；群友发「查询触发词」（默认 `[好感度]`）可查看自己的分数与称号。数据可选保存到 `affinity.json`。
   - **每日签到**：群友发「签到触发词」（默认 `[签到]`）每天可领一次额外好感度（默认 +5，**不受每日上限限制**），并记录连签天数。
   - **视频推荐**：群友发「触发词 + 视频推荐」（默认 `[视频推荐]`）即在群里推一批 B 站视频。五种来源：番剧追番榜（默认）/ B 站首页推荐 / 首页热门 / 全站排行 / 我的收藏夹（需登录）。**全服共用**冷却，冷却过后再点会**换一批新的**。
+  - **拍一拍**：调 OneBot 11 `send_poke`，**完全不让大模型决定**——「被拍了就拍回去」+「好感度高的群友说话时小概率主动拍」，带同群冷却（默认 120 秒）防风控。
 - **界面对话**：日志页实时显示连接状态、群消息、AI 回复（收到 / 回复统一格式，见下），并可**手动发送**测试。
 - **聊天记录落盘**：程序关闭时把全部聊天 / 回复 / 连接系统日志保存到 `logs/[日期][群号][群名][保存次数].log`，同一天多次关闭「保存次数」依次 +1，历史不覆盖。
 
@@ -138,7 +140,8 @@ AI QQ Friends/
 ├─ aafm_qq/
 │  ├─ gui.py              # tkinter GUI：连接 / AI 配置 / 互动 / 杂项 / 日志
 │  ├─ controller.py       # 引擎 + AI + 配置；框架自动发现与 Token 握手探测
-│  ├─ ai_bot.py           # “群友”大脑：判定回复、上下文、调用大模型、切分发送
+│  ├─ ai_bot.py           # “群友”大脑：判定回复、上下文（Token 预算）、引用回复、联网搜索、调用大模型
+│  ├─ websearch.py        # 联网搜索：DuckDuckGo / Bing（免费）+ 自定义 JSON 接口
 │  ├─ interactions.py     # 群内互动调度：点歌 / 视频推荐 / 好感度 / 签到（命中即不再走 AI）
 │  ├─ song.py             # 点歌：QQ音乐 / 网易云搜索（会员 Cookie 解析直链）
 │  ├─ netease.py          # 网易云：匿名搜索 / 取直链 / 扫码登录
@@ -173,7 +176,11 @@ AI QQ Friends/
     "model": "deepseek-chat", "temperature": 0.8, "maxTokens": 512,
     "systemPrompt": "你是 QQ 群里的一个普通群友……",
     "mentionReply": false, "triggerEnabled": true, "triggerWord": "[AI]", "triggerRegex": "",
-    "stripTrigger": true, "blockedWords": ["纯净输出", "傻逼", "fuck"]
+    "atReply": true, "quoteReply": true,
+    "stripTrigger": true, "blockedWords": ["纯净输出", "傻逼", "fuck"],
+    "contextEnabled": true, "contextLength": 40, "contextTokenBudget": 1200,
+    "searchEnabled": false, "searchProvider": "duckduckgo", "searchMode": "keywords",
+    "searchMaxResults": 5, "searchTimeoutSeconds": 12, "searchApiUrl": "", "searchApiKey": ""
   },
   "song": {
     "enabled": true, "trigger": "[点歌]", "platform": "auto",
@@ -183,6 +190,11 @@ AI QQ Friends/
     "enabled": true, "start": 20, "maximum": 100, "gainPerChat": 2, "dailyCap": 20,
     "queryTrigger": "[好感度]", "promptHint": true, "persist": true,
     "checkinEnabled": true, "checkinTrigger": "[签到]", "checkinGain": 5
+  },
+  "poke": {
+    "enabled": true, "pokeBack": true, "pokeBackChance": 100,
+    "proactive": true, "affinityThreshold": 60, "proactiveChance": 15,
+    "cooldownSeconds": 120
   },
   "misc": {
     "videoEnabled": true, "videoTrigger": "[视频推荐]", "videoSource": "anime",
