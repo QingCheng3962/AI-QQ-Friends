@@ -4,7 +4,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.3] - 2026-10-27
 
 ### Added · Quote replies (zero cost, feels human)
 
@@ -32,6 +32,20 @@ This project follows [Semantic Versioning](https://semver.org/).
 - New **Web search** box on the AI Config tab: enable, source, *keyword-triggered / every reply*, keywords, result count, timeout, custom URL and key.
 - Search runs only when the bot is **actually going to reply**; results are marked "may be stale, reference only" and injected into the prompt with an instruction not to make things up.
 - Custom API: a URL containing `{query}` is called with **GET** (SearXNG: `…/search?q={query}&format=json`); otherwise a JSON **POST** (`{"query": ...}`, optional `Authorization: Bearer <key>`).
+
+### Added · Private-chat auto replies
+
+- Private messages are now supported: the engine emits `privateMessage` (friends / temporary sessions); log lines read `[time][私聊：QQ][QQ][nickname]：content` and are saved to their own bucket (`[date][P<QQ>][私聊-nickname][n].log`).
+- Private chat replies **by default to every message, without a trigger word** (`ai.privateReplyEnabled` / `ai.privateAlwaysReply`); context (per person), quote replies, web search and output filtering all apply.
+- Sending uses OneBot 11 `send_private_msg`; the last line is logged as `Replay[私聊：QQ][bot] -> …` as well.
+- **AI Config → Reply Rules** gains “reply in private chat” and “reply to every private message (no trigger word)”.
+
+### Added · Auto-accept friend / group requests
+
+- The engine now emits a `request` event (`request_type = friend | group`, with `sub_type` / `group_id` / `comment` / `flag`).
+- A new **Auto-accept** box on the Interactions tab with independent switches: **friend requests**, **invite the bot into a group**, **join requests**, plus “the invite path also respects the group whitelist / ignore list”.
+- Approving uses `set_friend_add_request` / `set_group_add_request`; a class that is switched off is **only logged** and left for you to handle manually.
+- It **never rejects** anything on its own (no false negatives) — it only approves or leaves it pending.
 
 ## [0.1.2] - 2026-10-18
 

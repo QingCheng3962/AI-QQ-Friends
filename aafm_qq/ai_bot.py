@@ -49,9 +49,12 @@ class AiBot:
     def __init__(self, config: AiConfig,
                  send_group: Callable[[str, str, str, str], bool],
                  on_log: Callable[[str, str], None],
-                 affinity: Optional[object] = None):
+                 affinity: Optional[object] = None,
+                 send_private: Optional[Callable[[str, str, str], bool]] = None):
         self.config = config
         self._send_group = send_group   # (groupId, text, atSender, replyTo) -> bool
+        # (userId, text, replyTo) -> bool；私聊（好友 / 临时会话）走这条
+        self._send_private = send_private or (lambda *a, **k: False)
         self._log = on_log              # (level, message)
         # Optional 好感度 store (aafm_qq.affinity.Affinity): used to colour the
         # persona prompt and to reward members who chat with the bot.
@@ -191,18 +194,32 @@ class AiBot:
 
     def _should_reply(self, ev: dict) -> bool:
         cfg = self.config
-        if self._is_blacklisted(ev.get('senderId', '')):
+        if self._is_blacklisted(str(ev.get('senderId') or ev.get('userId') or '')):
             return False
-        if ev.get('mentioned') and cfg.mentionReply:
+        if ev.get('isPrivate'):
+            # 私聊（聊天页面）：默认每条都回，不用触发词。
+            if not cfg.privateReplyEnabled:
+                return False
+            if cfg.privateAlwaysReply:
+                return True
+        elif ev.get('mentioned') and cfg.mentionReply:
             return True
         content = ev.get('content') or ''
         if cfg.triggerEnabled:
             for pat in self._compile_triggers():
                 if pat.search(content):
                     return True
-        if cfg.autoReply and random.randint(1, 100) <= max(0, min(100, cfg.autoReplyChance)):
+        if not ev.get('isPrivate') and cfg.autoReply \
+                and random.randint(1, 100) <= max(0, min(100, cfg.autoReplyChance)):
             return True
         return False
+
+    @staticmethod
+    def _conv_key(ev: dict) -> str:
+        """上下文按会话分开：群聊一个群一份，私聊一个人一份。"""
+        if ev.get('isPrivate'):
+            return 'private:' + str(ev.get('userId') or '')
+        return 'group:' + str(ev.get('groupId') or '')
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -217,30 +234,38 @@ class AiBot:
                 self._log('error', 'AI 处理出错: ' + str(e))
 
     def _handle(self, ev: dict) -> None:
+        is_private = bool(ev.get('isPrivate'))
         group_id = str(ev.get('groupId') or '')
+        user_id = str((ev.get('userId') if is_private else ev.get('senderId')) or '')
         content = (ev.get('content') or '').strip()
-        sender = ev.get('sender') or '群友'
-        sender_id = str(ev.get('senderId') or '')
-        if not group_id:
+        sender = ev.get('sender') or ('好友' if is_private else '群友')
+        if is_private:
+            if not user_id:
+                return
+        elif not group_id:
             return
         # Skip our own messages.
-        if self.self_id and sender_id and sender_id == str(self.self_id):
+        if self.self_id and user_id and user_id == str(self.self_id):
             return
+        conv = self._conv_key(ev)
+        # 好感度按群记；私聊统一放在 'private' 这个桶里（同一个人跨群私聊分数一致）
+        aff_key = 'private' if is_private else group_id
         if content:
-            self._context(group_id).append(f'{sender}: {content}')
+            self._context(conv).append(f'{sender}: {content}')
 
         if not self.config.enabled or not self._should_reply(ev):
             return
 
         now = time.time()
         cooldown = int(self.config.cooldownSeconds or 0)
-        if cooldown and now - self._last_reply_at.get(group_id, 0) < cooldown:
+        if cooldown and now - self._last_reply_at.get(conv, 0) < cooldown:
             return
         # Record the attempt before calling the model: a failing LLM must not be
         # hammered by every matching message (there is no reply to timestamp).
-        self._last_reply_at[group_id] = now
+        self._last_reply_at[conv] = now
 
-        reply = self._ask(group_id, sender, content, sender_id)
+        reply = self._ask(conv, sender, content, user_id,
+                          aff_key=aff_key, is_private=is_private)
         if not reply:
             return
         reply = self._sanitize_reply(reply)
@@ -250,19 +275,24 @@ class AiBot:
         # 只引用第一条：把触发消息的 id 作为消息段第一位（不用 LLM 参与）。
         quote = str(ev.get('messageId') or '') if self.config.quoteReply else ''
         for idx, line in enumerate(self._split_reply(reply)):
-            at = sender_id if self.config.atReply else ''
             reply_to = quote if idx == 0 else ''
-            if self._send_group(group_id, line, at, reply_to):
-                self._context(group_id).append(f'我: {line}')
+            if is_private:
+                ok = self._send_private(user_id, line, reply_to)
+            else:
+                at = user_id if self.config.atReply else ''
+                ok = self._send_group(group_id, line, at, reply_to)
+            if ok:
+                self._context(conv).append(f'我: {line}')
                 sent += 1
             time.sleep(0.6)
         if sent and self._affinity is not None:
             try:  # 被搭话就涨好感度（受每日上限约束）
-                self._affinity.add(group_id, sender_id, sender)
+                self._affinity.add(aff_key, user_id, sender)
             except Exception as e:  # noqa: BLE001
                 self._log('warn', '好感度更新失败: ' + str(e))
 
-    def _ask(self, group_id: str, sender: str, content: str, sender_id: str = '') -> str:
+    def _ask(self, group_id: str, sender: str, content: str, sender_id: str = '',
+             aff_key: str = '', is_private: bool = False) -> str:
         cfg = self.config
         try:
             provider = llm.create_provider(cfg)
@@ -276,16 +306,23 @@ class AiBot:
             else:
                 history = ''
             lines = history or f'{sender}: {content}'
-            user = f'以下是 QQ 群最近的聊天记录：\n{lines}\n\n'
+            if is_private:
+                user = f'以下是你们最近的私聊记录：\n{lines}\n\n'
+            else:
+                user = f'以下是 QQ 群最近的聊天记录：\n{lines}\n\n'
             searched = self._maybe_search(content)
             if searched:
                 user += ('我刚查到的联网搜索结果（可能过时，仅供参考；'
                          '能用就用，别编造）：\n' + searched + '\n\n')
-            user += (f'请以群友身份接一句话回复（口语、简短，最多 '
-                     f'{int(cfg.maxReplyMessages)} 句）。')
+            if is_private:
+                user += (f'请直接回他一句（口语、简短，最多 '
+                         f'{int(cfg.maxReplyMessages)} 句）。')
+            else:
+                user += (f'请以群友身份接一句话回复（口语、简短，最多 '
+                         f'{int(cfg.maxReplyMessages)} 句）。')
             system_prompt = cfg.systemPrompt
             if self._affinity is not None:
-                hint = self._affinity.hint(group_id, sender_id, sender)
+                hint = self._affinity.hint(aff_key or group_id, sender_id, sender)
                 if hint:
                     system_prompt = f'{system_prompt}\n{hint}'
             text = provider.send(system_prompt, [{'role': 'user', 'content': user}])

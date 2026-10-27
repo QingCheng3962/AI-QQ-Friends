@@ -9,6 +9,7 @@ Persisted to ``config.json`` next to the program (gitignored). Two parts:
 - ``song``    : 点歌 (song request) — search a song and post a music card.
 - ``affinity``: 好感度 (favour) — a per-member score that colours the persona.
 - ``poke``    : 拍一拍 (poke) — poke back / poke close members (no LLM involved).
+- ``requests``: 自动同意 — friend requests / group invites / join requests.
 - ``misc``    : 杂项 — 视频推荐 (Bilibili video recommendations).
 """
 from __future__ import annotations
@@ -130,6 +131,9 @@ class AiConfig:
     autoReplyChance: int = 100                # 0-100 (used with autoReply)
     atReply: bool = True                      # prefix the reply with @sender
     quoteReply: bool = True                   # 引用触发它的那条消息（[CQ:reply]）
+    # 私聊（好友/临时会话的「聊天页面」）：默认也自动回复，且不用触发词。
+    privateReplyEnabled: bool = True
+    privateAlwaysReply: bool = True
 
     # Output filter: the bot must never echo the trigger (prevents group members
     # from injecting prompts) and must not say rude words / leak "纯净输出".
@@ -178,6 +182,8 @@ class AiConfig:
         self.autoReply = bool(self.autoReply)
         self.atReply = bool(self.atReply)
         self.quoteReply = bool(self.quoteReply)
+        self.privateReplyEnabled = bool(self.privateReplyEnabled)
+        self.privateAlwaysReply = bool(self.privateAlwaysReply)
         self.stripTrigger = bool(self.stripTrigger)
         if self.blockedWords is None:
             self.blockedWords = list(DEFAULT_BLOCKED_WORDS)
@@ -308,6 +314,28 @@ class PokeConfig:
         self.cooldownSeconds = _clamp_int(self.cooldownSeconds, 0, 3600)
 
 
+@dataclass
+class RequestConfig:
+    """自动同意：好友申请 / 被邀请入群 / 申请加群。
+
+    走 OneBot 11 的 ``set_friend_add_request`` / ``set_group_add_request``。
+    默认全开；不想自动处理某类就关掉对应开关（关掉后只记日志、留给你手动同意）。
+    """
+    enabled: bool = True            # 总开关
+    friend: bool = True             # 自动同意好友申请
+    groupInvite: bool = True        # 自动同意「邀请机器人入群」
+    groupJoin: bool = True          # 自动同意「申请加入机器人所在的群」
+    # 「邀请入群」也遵守「群白名单 / 忽略群」：白名单非空时，不在名单里的群不自动进
+    respectGroupFilter: bool = True
+
+    def validate(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.friend = bool(self.friend)
+        self.groupInvite = bool(self.groupInvite)
+        self.groupJoin = bool(self.groupJoin)
+        self.respectGroupFilter = bool(self.respectGroupFilter)
+
+
 # Titles shown when a member checks their 好感度 (high → low).
 AFFINITY_TITLES = [
     (95, '心动'),
@@ -394,6 +422,7 @@ _NESTED_CONFIGS = {
     'song': SongConfig,
     'affinity': AffinityConfig,
     'poke': PokeConfig,
+    'requests': RequestConfig,
     'misc': MiscConfig,
 }
 
@@ -413,6 +442,7 @@ class AppConfig:
     song: SongConfig = field(default_factory=SongConfig)
     affinity: AffinityConfig = field(default_factory=AffinityConfig)
     poke: PokeConfig = field(default_factory=PokeConfig)
+    requests: RequestConfig = field(default_factory=RequestConfig)
     misc: MiscConfig = field(default_factory=MiscConfig)
 
     def active(self) -> OneBotConfig:

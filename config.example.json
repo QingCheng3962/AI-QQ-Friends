@@ -42,6 +42,8 @@
     "autoReplyChance": 100,
     "atReply": true,
     "quoteReply": true,
+    "privateReplyEnabled": true,
+    "privateAlwaysReply": true,
     "stripTrigger": true,
     "blockedWords": ["纯净输出", "傻逼", "尼玛", "妈的", "草泥马", "fuck", "shit"],
     "contextEnabled": true,
@@ -89,6 +91,13 @@
     "affinityThreshold": 60,
     "proactiveChance": 15,
     "cooldownSeconds": 120
+  },
+  "requests": {
+    "enabled": true,
+    "friend": true,
+    "groupInvite": true,
+    "groupJoin": true,
+    "respectGroupFilter": true
   },
   "misc": {
     "videoEnabled": true,

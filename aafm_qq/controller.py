@@ -40,7 +40,8 @@ class Controller:
         self.interactions = Interactions(self.config, self._ai_send,
                                          self._send_music, self._log)
         self.ai = AiBot(self.config.ai, self._ai_send, self._log,
-                        affinity=self.interactions.affinity)
+                        affinity=self.interactions.affinity,
+                        send_private=self._ai_send_private)
         self.ai.self_id = ''
 
         self._running = False
@@ -97,6 +98,19 @@ class Controller:
     def send_manual(self, group_id: str, text: str) -> bool:
         """Send a test message from the GUI. Returns whether it was queued."""
         return self._ai_send(group_id, text)
+
+    @staticmethod
+    def _private_bucket(user_id: str) -> str:
+        """私聊日志分桶（P 前缀，避免和群号撞车）。"""
+        return 'P' + str(user_id or '')
+
+    def _ai_send_private(self, user_id: str, text: str, reply_to: str = '') -> bool:
+        ok = self._engine.send_private(user_id, text, reply_to)
+        if ok:
+            self._emit(f'[{_now()}]Replay[私聊：{user_id}][bot] -> {text}',
+                       'out', self._private_bucket(user_id),
+                       f'私聊-{user_id}')
+        return ok
 
     def _send_music(self, group_id: str, **card) -> bool:
         ok = self._engine.send_group_music(group_id, **card)
@@ -385,6 +399,12 @@ class Controller:
         if etype == 'groupMessage':
             self._on_group_message(ev)
             return
+        if etype == 'privateMessage':
+            self._on_private_message(ev)
+            return
+        if etype == 'request':
+            self._on_request(ev)
+            return
         if etype == 'poke':
             self._on_poke(ev)
             return
@@ -413,6 +433,87 @@ class Controller:
             self._log('error', '互动功能出错: ' + str(e))
         self._maybe_proactive_poke(ev)
         self.ai.feed(ev)
+
+    def _on_private_message(self, ev: Dict[str, Any]) -> None:
+        """私聊（好友 / 临时会话）：同样记日志 + 交给聊天 AI。"""
+        user_id = str(ev.get('userId') or '')
+        if not user_id:
+            return
+        name = str(ev.get('sender') or ('QQ' + user_id))
+        content = ev.get('content') or ''
+        # 收到的私聊：格式与群聊一致，只是「群号」换成「私聊：QQ号」。
+        self._emit(f'[{_now()}][私聊：{user_id}][{user_id}][{name}]：{content}',
+                   'in', self._private_bucket(user_id), f'私聊-{name}')
+        # Ignore our own messages so the bot never reacts to itself.
+        self_id = str(getattr(self.ai, 'self_id', '') or '')
+        if self_id and user_id == self_id:
+            return
+        ev = dict(ev)
+        ev['isPrivate'] = True
+        ev.setdefault('senderId', user_id)
+        self.ai.feed(ev)
+
+    # ------------------------------------------------------------------
+    # 自动同意：好友申请 / 邀请入群 / 申请加群
+    # ------------------------------------------------------------------
+    def _on_request(self, ev: Dict[str, Any]) -> None:
+        rc = self.config.requests
+        rtype = str(ev.get('requestType') or '')
+        sub = str(ev.get('subType') or '')
+        flag = str(ev.get('flag') or '')
+        user_id = str(ev.get('userId') or '')
+        group_id = str(ev.get('groupId') or '')
+        comment = str(ev.get('comment') or '').strip()
+
+        if rtype == 'friend':
+            desc = f'[申请] {user_id} 请求加好友'
+        elif rtype == 'group':
+            if sub == 'invite':
+                desc = f'[申请] {user_id} 邀请机器人加入群 {group_id or "?"}'
+            else:
+                desc = f'[申请] {user_id} 申请加入群 {group_id or "?"}'
+        else:
+            return
+        if comment:
+            desc += f'，附言：{comment[:80]}'
+        if not flag:
+            self._sys('warn', desc + ' → 缺少 flag，无法自动处理')
+            return
+        if not rc.enabled:
+            self._sys('info', desc + ' → 自动同意已关闭（未处理）')
+            return
+
+        approve = False
+        if rtype == 'friend':
+            approve = bool(rc.friend)
+        elif sub == 'invite':
+            if rc.respectGroupFilter and self._group_request_blocked(group_id):
+                self._sys('info', desc + ' → 不在群白名单 / 属于忽略群，不自动同意')
+                return
+            approve = bool(rc.groupInvite)
+        else:
+            approve = bool(rc.groupJoin)
+
+        if not approve:
+            self._sys('info', desc + ' → 按设置不自动同意')
+            return
+
+        if rtype == 'friend':
+            ok = self._engine.approve_friend(flag)
+        else:
+            ok = self._engine.approve_group(flag, sub or 'add')
+        self._sys('info' if ok else 'warn',
+                  desc + (' → 已自动同意' if ok else ' → 自动同意失败（框架不支持或已失效）'))
+
+    def _group_request_blocked(self, group_id: str) -> bool:
+        """「邀请入群」是否被群白名单 / 忽略群挡住。"""
+        if not group_id:
+            return False
+        gid = str(group_id)
+        if gid in [str(x) for x in (self.config.ignoreGroups or [])]:
+            return True
+        allow = [str(x) for x in (self.config.groups or [])]
+        return bool(allow) and gid not in allow
 
     # ------------------------------------------------------------------
     # 拍一拍（完全不经过大模型：被拍回拍 / 好感度高的群友说话时偶尔拍一下）
@@ -497,6 +598,7 @@ class Controller:
         self.config.song.validate()
         self.config.affinity.validate()
         self.config.poke.validate()
+        self.config.requests.validate()
         self.config.misc.validate()
         self.ai.load(self.config.ai)
         self.interactions.load(self.config)

@@ -9,11 +9,14 @@
 //   {"event":"status","state":"connected"|"disconnected","selfId":...}
 //   {"event":"groups","groups":[{id,name}]}
 //   {"event":"groupMessage","groupId","groupName","sender","senderId","content","mentioned":bool,"atAll":bool,"messageId","raw":...}
+//   {"event":"privateMessage","userId","sender","content","messageId","subType","raw":...}
+//   {"event":"request","requestType":"friend"|"group","subType","groupId","userId","comment","flag"}
 //   {"event":"poke","groupId","userId","targetId","isTargetMe":bool,"isFromMe":bool}
 //   {"event":"error","message":...}
 //   {"event":"end","reason":...}
 // Commands (stdin, one JSON per line):
 //   {"type":"sendGroup","groupId":...,"text":...,"atSender":bool,"replyTo":messageId}
+//   {"type":"sendPrivate","userId":...,"text":...,"replyTo":messageId}
 //   {"type":"sendGroupMusic","groupId":...,"platform":"qq"|"163"|"custom",
 //    "songId":...,"title":...,"audio":...,"url":...,"image":...}
 //   {"type":"action","action":"send_poke","params":{...}}   // any OneBot 11 action
@@ -202,6 +205,13 @@ function senderName(event) {
 
 function groupName(id) { return groupNames.get(id) || ('群' + id); }
 
+function privateName(event) {
+    const s = (event && event.sender) || {};
+    const nick = s.nickname ? String(s.nickname).trim() : '';
+    const card = s.card ? String(s.card).trim() : '';
+    return nick || card || ('QQ' + ((s.user_id != null ? s.user_id : event.user_id) || ''));
+}
+
 // --- outgoing ---
 // Escape CQ code special characters (& [ ] ,) inside a parameter value.
 function cqEscape(value) {
@@ -309,9 +319,41 @@ function handleObj(obj) {
         });
         return;
     }
+    if (obj.post_type === 'request') {
+        const requestType = String(obj.request_type || '');
+        if (requestType !== 'friend' && requestType !== 'group') return;
+        const gid = obj.group_id != null ? String(obj.group_id) : '';
+        emitEvent({
+            event: 'request',
+            requestType,
+            subType: String(obj.sub_type || ''),
+            groupId: gid,
+            groupName: gid ? sanitizeText(groupName(gid)) : '',
+            userId: String(obj.user_id != null ? obj.user_id : ''),
+            comment: sanitizeText(obj.comment || ''),
+            flag: String(obj.flag || ''),
+        });
+        return;
+    }
     if (obj.post_type !== 'message') return;
-    const type = obj.message_type === 'private' ? 'private' : 'group';
-    if (type !== 'group') return;
+    if (obj.message_type === 'private') {
+        const uid = String(obj.user_id != null ? obj.user_id
+            : ((obj.sender || {}).user_id != null ? obj.sender.user_id : ''));
+        if (!uid) return;
+        const text = extractText(obj.message != null ? obj.message : obj.raw_message);
+        if (!text) return;
+        emitEvent({
+            event: 'privateMessage',
+            userId: uid,
+            sender: sanitizeText(privateName(obj)),
+            content: text,
+            messageId: obj.message_id != null ? String(obj.message_id) : '',
+            subType: String(obj.sub_type || 'friend'),
+            raw: sanitizeText(obj.raw_message || ''),
+        });
+        return;
+    }
+    if (obj.message_type !== 'group') return;
 
     const groupId = String(obj.group_id);
     if (ignoreFilter.has(groupId)) return;
@@ -457,6 +499,21 @@ function handleCommand(cmd) {
             let msg = text;
             if (cmd.atSender) msg = '[CQ:at,qq=' + String(cmd.atSender) + '] ' + msg;
             sendAction('send_group_msg', { group_id: gid, message: msg });
+            break;
+        }
+        case 'sendPrivate': {
+            const uid = String(cmd.userId == null ? '' : cmd.userId).trim();
+            const text = String(cmd.text || '');
+            if (!uid || !text) return;
+            const replyTo = String(cmd.replyTo == null ? '' : cmd.replyTo).trim();
+            if (replyTo) {
+                sendAction('send_private_msg', { user_id: uid, message: [
+                    { type: 'reply', data: { id: replyTo } },
+                    { type: 'text', data: { text } },
+                ] });
+                break;
+            }
+            sendAction('send_private_msg', { user_id: uid, message: text });
             break;
         }
         case 'action': {

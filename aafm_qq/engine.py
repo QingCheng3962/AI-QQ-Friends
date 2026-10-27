@@ -101,6 +101,11 @@ class QqEngine:
                           'text': text, 'atSender': str(at_sender or ''),
                           'replyTo': str(reply_to or '')})
 
+    def send_private(self, user_id: str, text: str, reply_to: str = '') -> bool:
+        """私聊发消息（好友 / 临时会话）。"""
+        return self.send({'type': 'sendPrivate', 'userId': str(user_id),
+                          'text': text, 'replyTo': str(reply_to or '')})
+
     def send_action(self, action: str, params: Optional[Dict[str, Any]] = None) -> bool:
         """Run any OneBot 11 action through the engine (e.g. ``send_poke``)."""
         return self.send({'type': 'action', 'action': str(action or ''),
@@ -110,6 +115,18 @@ class QqEngine:
         """拍一拍群成员（OneBot 11 ``send_poke``）。"""
         return self.send_action('send_poke', {'group_id': str(group_id),
                                               'user_id': str(user_id)})
+
+    def approve_friend(self, flag: str) -> bool:
+        """自动同意好友申请。"""
+        return self.send_action('set_friend_add_request',
+                                {'flag': str(flag), 'approve': True})
+
+    def approve_group(self, flag: str, sub_type: str = 'add') -> bool:
+        """自动同意加群申请 / 入群邀请（``sub_type``: add / invite）。"""
+        return self.send_action('set_group_add_request',
+                                {'flag': str(flag),
+                                 'sub_type': str(sub_type or 'add'),
+                                 'approve': True})
 
     def send_group_music(self, group_id: str, platform: str = '163', songId: str = '',
                          title: str = '', artist: str = '', audio: str = '',

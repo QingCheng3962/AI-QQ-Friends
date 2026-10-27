@@ -185,6 +185,8 @@ class App:
         self.var_chance = tk.StringVar()
         self.var_at = tk.BooleanVar(value=True)
         self.var_quote = tk.BooleanVar(value=True)
+        self.var_private_reply = tk.BooleanVar(value=True)
+        self.var_private_always = tk.BooleanVar(value=True)
         ttk.Checkbutton(rule, text='被 @ 时回复', variable=self.var_mention).grid(
             row=0, column=0, sticky='w', padx=4, pady=2)
         ttk.Checkbutton(rule, text='触发词回复', variable=self.var_trig_enabled).grid(
@@ -202,6 +204,12 @@ class App:
         ttk.Checkbutton(r, text='回复时 @ 对方', variable=self.var_at).pack(side='left')
         ttk.Checkbutton(r, text='引用触发消息（针对性回复）',
                         variable=self.var_quote).pack(side='left', padx=(12, 0))
+        r2 = ttk.Frame(rule)
+        r2.grid(row=4, column=0, columnspan=4, sticky='w', pady=(2, 0))
+        ttk.Checkbutton(r2, text='私聊也回复（聊天页面）',
+                        variable=self.var_private_reply).pack(side='left', padx=(0, 12))
+        ttk.Checkbutton(r2, text='私聊每条都回（不用触发词）',
+                        variable=self.var_private_always).pack(side='left')
         rule.columnconfigure(1, weight=1)
 
         ctx = ttk.LabelFrame(sc.inner, text='上下文与限制', padding=8)
@@ -429,6 +437,32 @@ class App:
                        '真的被限了就先把「主动拍」关掉，只留「被拍回拍」。').pack(
             anchor='w', padx=4, pady=(4, 0))
 
+        # --- 自动同意（好友 / 加群申请）---
+        rq2 = ttk.LabelFrame(host, text='自动同意（好友申请 / 加群申请）', padding=8)
+        rq2.pack(fill='x', pady=(8, 4))
+        self.var_req_enabled = tk.BooleanVar(value=True)
+        self.var_req_friend = tk.BooleanVar(value=True)
+        self.var_req_invite = tk.BooleanVar(value=True)
+        self.var_req_join = tk.BooleanVar(value=True)
+        self.var_req_filter = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rq2, text='启用自动同意', variable=self.var_req_enabled).pack(
+            anchor='w', padx=4, pady=2)
+        ra = ttk.Frame(rq2)
+        ra.pack(fill='x', pady=2)
+        ttk.Checkbutton(ra, text='好友申请', variable=self.var_req_friend).pack(
+            side='left', padx=(4, 16))
+        ttk.Checkbutton(ra, text='邀请机器人入群', variable=self.var_req_invite).pack(
+            side='left', padx=(0, 16))
+        ttk.Checkbutton(ra, text='加群申请', variable=self.var_req_join).pack(
+            side='left')
+        rb = ttk.Frame(rq2)
+        rb.pack(fill='x', pady=(4, 0))
+        ttk.Checkbutton(rb, text='「邀请入群」也遵守群白名单 / 忽略群',
+                        variable=self.var_req_filter).pack(side='left', padx=4)
+        ttk.Label(rq2, foreground='#888888', wraplength=760, justify='left',
+                  text='关掉的类别只记日志、留给你手动同意；也能在「连接」页的群白名单里'
+                       '限制只自动进哪些群。').pack(anchor='w', padx=4, pady=(4, 0))
+
     def _build_misc_tab(self):
         host = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(host, text=' 杂项 ')
@@ -596,6 +630,8 @@ class App:
         self.var_chance.set(str(ai.autoReplyChance))
         self.var_at.set(bool(ai.atReply))
         self.var_quote.set(bool(ai.quoteReply))
+        self.var_private_reply.set(bool(ai.privateReplyEnabled))
+        self.var_private_always.set(bool(ai.privateAlwaysReply))
         self.var_ctx_enabled.set(bool(ai.contextEnabled))
         self.var_ctx_len.set(str(ai.contextLength))
         self.var_ctx_budget.set(str(ai.contextTokenBudget))
@@ -654,6 +690,13 @@ class App:
         self.var_poke_chance.set(str(pk.proactiveChance))
         self.var_poke_cooldown.set(str(pk.cooldownSeconds))
 
+        rq = cfg.requests
+        self.var_req_enabled.set(bool(rq.enabled))
+        self.var_req_friend.set(bool(rq.friend))
+        self.var_req_invite.set(bool(rq.groupInvite))
+        self.var_req_join.set(bool(rq.groupJoin))
+        self.var_req_filter.set(bool(rq.respectGroupFilter))
+
         misc = cfg.misc
         self.var_misc_video_enabled.set(bool(misc.videoEnabled))
         self.var_misc_video_trigger.set(misc.videoTrigger or '')
@@ -702,6 +745,8 @@ class App:
         ai.autoReplyChance = self._int(self.var_chance.get(), 100)
         ai.atReply = self.var_at.get()
         ai.quoteReply = self.var_quote.get()
+        ai.privateReplyEnabled = self.var_private_reply.get()
+        ai.privateAlwaysReply = self.var_private_always.get()
         ai.contextEnabled = self.var_ctx_enabled.get()
         ai.contextLength = self._int(self.var_ctx_len.get(), 40)
         ai.contextTokenBudget = self._int(self.var_ctx_budget.get(), 1200)
@@ -755,6 +800,13 @@ class App:
         pk.affinityThreshold = self._int(self.var_poke_threshold.get(), 60)
         pk.proactiveChance = self._int(self.var_poke_chance.get(), 15)
         pk.cooldownSeconds = self._int(self.var_poke_cooldown.get(), 120)
+
+        rq = cfg.requests
+        rq.enabled = self.var_req_enabled.get()
+        rq.friend = self.var_req_friend.get()
+        rq.groupInvite = self.var_req_invite.get()
+        rq.groupJoin = self.var_req_join.get()
+        rq.respectGroupFilter = self.var_req_filter.get()
 
         misc = cfg.misc
         misc.videoEnabled = self.var_misc_video_enabled.get()

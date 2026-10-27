@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-> Current version **v0.1.2** · See [CHANGELOG.en.md](CHANGELOG.en.md) for the changelog
+> Current version **v0.1.3** · See [CHANGELOG.en.md](CHANGELOG.en.md) for the changelog
 
 Plug a large language model into a QQ group and let it become a **group member that actually chats**: when a message **starts with** the trigger word (default `[AI]`), it replies like a real netizen — bantering, keeping up with memes, answering questions — with **prompt-injection protection + language filtering** on the output.
 
@@ -26,6 +26,7 @@ Plug a large language model into a QQ group and let it become a **group member t
   - **Context memory** (remembers the last N messages per group) with a **token budget** (fills newest-first, trims at sentence boundaries when over budget), **@-mention the sender** on reply, **quote the trigger message** (a `reply` segment as the first element of the message array, no LLM involved), **cooldown**, **blacklist**.
   - Max characters per message and max number of reply messages.
   - **Web search** (optional): free **DuckDuckGo / Bing**, or a **custom JSON API** (SearXNG / Tavily / Serper). By default it only searches when keywords match (weather, news, stock…) and the bot is actually replying, then injects the results as reference so it does not make things up.
+  - **Private-chat auto replies** (friends / temporary sessions): replies to **every message by default, no trigger word**, with per-person context; logged separately as `[date][P<QQ>][私聊-nickname][n].log`.
   - **Output filtering**: if a reply **contains your trigger word** (e.g. `[AI]`) it is stripped out — preventing prompt injection by group members and self-triggering; a reply that hits a **blocked word** (defaults include “纯净输出” plus common profanity) is **dropped entirely**. Trigger words, blocked words and toggles live under “AI Config → Reply Rules / Output Filter”.
 - **In-group interactions**
   - **Song request**: a member sends “trigger word + song name” (default `[点歌] 起风了`) and the bot searches and posts a **music card**. The order is QQ Music → NetEase Cloud; if neither works it falls back to a directly playable alternate source (a `custom` card). A message consumed by a song request is **not** handed to the chat AI.
@@ -33,6 +34,7 @@ Plug a large language model into a QQ group and let it become a **group member t
   - **Daily check-in**: a member sends the check-in trigger (default `[签到]`) once a day for bonus affinity (default +5, **not limited by the daily cap**), and a consecutive-day count is kept.
   - **Video recommendations**: a member sends “trigger + 视频推荐” (default `[视频推荐]`) to post a batch of Bilibili videos. Five sources: anime ranking (default) / Bilibili home feed / home popular / site ranking / my favorites (needs login). The cooldown is **shared across all users**, and asking again after it expires fetches a **fresh batch**.
   - **Poke**: OneBot 11 `send_poke`, **never decided by the LLM** — “poke back when poked” plus “occasionally poke members whose affinity is high”, with a per-group cooldown (default 120 s) to stay clear of QQ risk control.
+  - **Auto-accept**: friend requests / group invites / join requests, three independent switches (the invite path can respect the group whitelist), via `set_friend_add_request` / `set_group_add_request`; it **only approves, never rejects** — switched-off classes are just logged for you to handle.
 - **In-app conversation**: the Log tab shows connection status, group messages and AI replies in real time (all in one unified format and written to `logs/` when you close the app), and can **send test messages manually**.
 
 ## Requirements
